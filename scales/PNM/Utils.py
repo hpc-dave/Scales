@@ -237,9 +237,9 @@ def ImportPNExtractToOpenPNM(path: str = '', ext: str = 'dat', scale: float = 1,
     else:
         printIf = lambda pstr: print(pstr)  # noqa: E731
 
-    coords, dpore, vpore, _ = ReadPoresPNExtract(path, ext, silent=silent)
+    coords, dpore, vpore, shape_pore = ReadPoresPNExtract(path, ext, silent=silent)
     num_pores = len(coords[:, 0])
-    conns, dthroat, _ = ReadThroatsPNExtract(path, ext, silent)
+    conns, dthroat, shape_throat = ReadThroatsPNExtract(path, ext, silent)
 
     # pnextract assigns a value of -1 to boundary throats
     # however, openpnm assigns BCs to pores, so we need to label those instead
@@ -258,12 +258,15 @@ def ImportPNExtractToOpenPNM(path: str = '', ext: str = 'dat', scale: float = 1,
     dthroat *= scale
     dpore *= scale
     coords *= scale
+    vpore *= scale**3
 
     # create the network
     pn = op.network.Network(coords=coords, conns=conns)
     pn['pore.diameter'] = dpore
     pn['throat.diameter'] = dthroat
     pn['pore.volume'] = vpore
+    pn['pore.shape_factor'] = shape_pore
+    pn['throat.shape_factor'] = shape_throat
 
     # assign boundary labels
     max_dim = np.max(coords[:, axis])
@@ -346,6 +349,9 @@ def ImportPNExtractToOpenPNM(path: str = '', ext: str = 'dat', scale: float = 1,
     mods.pop('pore.diameter', None)
     mods.pop('pore.seed', None)
     mods.pop('pore.volume', None)
+    mods.pop('pore.shape_factor', None)
+    mods.pop('throat.shape_factor', None)
+    mods['hydraulic_conductance'] = op.models.physics.hydraulic_conductance.valvatne_blunt
     pn.add_model_collection(mods)
     pn.regenerate_models()
     printIf('Updated Network with geometric properties:')
