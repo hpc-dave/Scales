@@ -154,13 +154,13 @@ def network_from_statoil(path : str, prefix : str, options = {}):
 
     # Use OpenPNM Tools to clean up network
     # Trim throats connected to 'inlet' or 'outlet' reservoirs
-    trim1 = InletCriteria(net)
+    trim1 = foutlet(net)
     # trim1 = np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
     # Apply 'outlet' label to these pores
     outlets = network['throat.conns'][trim1, 1]
     network['pore.outlet'] = False
     network['pore.outlet'][outlets] = True
-    trim2 = OutletCriteria(net)
+    trim2 = finlet(net)
     # trim2 = np.where(np.any(net['throat.conns'] == -2, axis=1))[0]
     # Apply 'inlet' label to these pores
     inlets = network['throat.conns'][trim2, 1]
