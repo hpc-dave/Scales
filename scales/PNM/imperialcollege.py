@@ -58,10 +58,10 @@ def network_from_statoil(path : str, prefix : str, options = {}):
 
     """
     def InletCriteria(net):
-        return np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
+        return np.where(np.any(net['throat.conns'] == -2, axis=1))[0]
 
     def OutletCriteria(net):
-        return np.where(np.any(net['throat.conns'] == -2, axis=1))[0]
+        return np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
 
     scale = options.get('scale', float(1))
     finlet = options.get('inlet', InletCriteria)
