@@ -13,7 +13,7 @@ def Image2STL(in_name, levels, step_size: int = 4, verbose: bool = True, out_nam
     use_level = False
     opt = {
                 'step_size': step_size,
-                'level': level,
+                'level': levels,
                 'verbose': verbose
     }
     if hasattr(levels, '__len__'):
@@ -37,7 +37,7 @@ def Image2STL(in_name, levels, step_size: int = 4, verbose: bool = True, out_nam
             phase[data == level] = 1
             v2s.Extract(phase, fname=oname, opt=opt)
     else:
-        oname = out_name if out_name != None else GetGenericSTLOutputName(in_name, level)
+        oname = out_name if out_name is not None else GetGenericSTLOutputName(in_name, level)
         v2s.Extract(data, fname=oname, opt=opt)
 
 
