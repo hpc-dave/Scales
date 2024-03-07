@@ -8,7 +8,7 @@ from pandas import read_table, DataFrame
 logger = logging.getLogger(__name__)
 
 
-def network_from_statoil(path, prefix):
+def network_from_statoil(path, prefix, scale: float = 1):
     r"""
     Load data from the \'dat\' files located in specified folder.
 
@@ -22,6 +22,9 @@ def network_from_statoil(path, prefix):
     network : Network
         If given then the data will be loaded on it and returned.  If not
         given, a Network will be created and returned.
+    scale : float
+        Scaling of the imported data, linear with length. Areas and Volumes are adapted
+        with **2 and **3 respectively
 
     Returns
     -------
@@ -64,9 +67,9 @@ def network_from_statoil(path, prefix):
     net['throat.conns'] = np.vstack((link1['throat.pore1']-1,
                                      link1['throat.pore2']-1)).T
     net['throat.conns'] = np.sort(net['throat.conns'], axis=1)
-    net['throat.radius'] = np.array(link1['throat.radius'])
+    net['throat.radius'] = np.array(link1['throat.radius']) * scale
     net['throat.shape_factor'] = np.array(link1['throat.shape_factor'])
-    net['throat.total_length'] = np.array(link1['throat.total_length'])
+    net['throat.total_length'] = np.array(link1['throat.total_length']) * scale
 
     filename = Path(path.resolve(), prefix+'_link2.dat')
     with open(filename, mode='r') as f:
@@ -80,15 +83,15 @@ def network_from_statoil(path, prefix):
                      'throat.length', 'throat.volume',
                      'throat.clay_volume']
     # Add link2 props to net
-    cl_t = np.array(link2['throat.length'])
-    net['throat.length'] = cl_t
+    cl_t = np.array(link2['throat.length']) * scale
+    net['throat.length'] = cl_t 
     net['throat.conduit_lengths.throat'] = cl_t
-    net['throat.volume'] = np.array(link2['throat.volume'])
-    cl_p1 = np.array(link2['throat.pore1_length'])
+    net['throat.volume'] = np.array(link2['throat.volume']) * scale**3
+    cl_p1 = np.array(link2['throat.pore1_length']) * scale
     net['throat.conduit_lengths.pore1'] = cl_p1
-    cl_p2 = np.array(link2['throat.pore2_length'])
+    cl_p2 = np.array(link2['throat.pore2_length']) * scale
     net['throat.conduit_lengths.pore2'] = cl_p2
-    net['throat.clay_volume'] = np.array(link2['throat.clay_volume'])
+    net['throat.clay_volume'] = np.array(link2['throat.clay_volume']) * scale**3
     # ---------------------------------------------------------------------
     # Parse the node1 file
     filename = Path(path.resolve(), prefix+'_node1.dat')
@@ -106,7 +109,7 @@ def network_from_statoil(path, prefix):
     # Add node1 props to net
     net['pore.coords'] = np.vstack((node1['pore.x_coord'],
                                     node1['pore.y_coord'],
-                                    node1['pore.z_coord'])).T
+                                    node1['pore.z_coord'])).T * scale
     # ---------------------------------------------------------------------
     # Parse the node2 file
     filename = Path(path.resolve(), prefix+'_node2.dat')
@@ -119,10 +122,10 @@ def network_from_statoil(path, prefix):
     node2.columns = ['pore.volume', 'pore.radius', 'pore.shape_factor',
                      'pore.clay_volume']
     # Add node2 props to net
-    net['pore.volume'] = np.array(node2['pore.volume'])
-    net['pore.radius'] = np.array(node2['pore.radius'])
+    net['pore.volume'] = np.array(node2['pore.volume']) * scale**3
+    net['pore.radius'] = np.array(node2['pore.radius']) * scale
     net['pore.shape_factor'] = np.array(node2['pore.shape_factor'])
-    net['pore.clay_volume'] = np.array(node2['pore.clay_volume'])
+    net['pore.clay_volume'] = np.array(node2['pore.clay_volume']) * scale**3
     net['throat.cross_sectional_area'] = ((net['throat.radius']**2)
                                           / (4.0*net['throat.shape_factor']))
     net['pore.area'] = ((net['pore.radius']**2)
@@ -148,6 +151,7 @@ def network_from_statoil(path, prefix):
     trim(network=network, throats=to_trim)
 
     return network
+
 
 def valvatne_blunt(
     phase,
