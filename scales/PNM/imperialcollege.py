@@ -27,12 +27,10 @@ def network_from_statoil(path : str, prefix : str, options = {}):
             scale : float -> Scaling of the imported data, linear with length.
                              Areas and Volumes are adapted with **2 and **3 respectively
                              default: 1
-            inlet : func -> criteria for determining inlet throats with following footprint
-                            (net) : logical[n_throat]
-                            default : np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
-            outlet : func -> criteria for determining inlet throats with following footprint
-                            (net) : logical[n_throat]
-                            default : np.where(np.any(net['throat.conns'] == -2, axis=1))[0]
+            boundaries : func -> determines inlet and outlet pores
+                             (net) : logical[n_throat], logical[n_throat]
+                             default : np.where(np.any(net['throat.conns'] == -2, axis=1))[0],
+                                       np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
 
     Returns
     -------
@@ -57,15 +55,12 @@ def network_from_statoil(path : str, prefix : str, options = {}):
     unfortunately incompatible with the standard way of using openpnm
 
     """
-    def InletCriteria(net):
-        return np.where(np.any(net['throat.conns'] == -2, axis=1))[0]
-
-    def OutletCriteria(net):
-        return np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
+    def BoundaryThroats(net):
+        # inlet and outlet throats
+        return np.where(np.any(net['throat.conns'] == -2, axis=1))[0], np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
 
     scale = options.get('scale', float(1))
-    finlet = options.get('inlet', InletCriteria)
-    foutlet = options.get('outlet', OutletCriteria)
+    fboundary = options.get('boundaries', BoundaryThroats)
 
     net = {}
 
@@ -154,20 +149,19 @@ def network_from_statoil(path : str, prefix : str, options = {}):
 
     # Use OpenPNM Tools to clean up network
     # Trim throats connected to 'inlet' or 'outlet' reservoirs
-    trim1 = foutlet(net)
+    trim_in, trim_out = fboundary(net)
     # trim1 = np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
     # Apply 'outlet' label to these pores
-    outlets = network['throat.conns'][trim1, 1]
+    outlets = network['throat.conns'][trim_out, 1]
     network['pore.outlet'] = False
     network['pore.outlet'][outlets] = True
-    trim2 = finlet(net)
     # trim2 = np.where(np.any(net['throat.conns'] == -2, axis=1))[0]
     # Apply 'inlet' label to these pores
-    inlets = network['throat.conns'][trim2, 1]
+    inlets = network['throat.conns'][trim_in, 1]
     network['pore.inlet'] = False
     network['pore.inlet'][inlets] = True
     # Now trim the throats
-    to_trim = np.hstack([trim1, trim2])
+    to_trim = np.hstack([trim_in, trim_out])
     trim(network=network, throats=to_trim)
 
     return network
