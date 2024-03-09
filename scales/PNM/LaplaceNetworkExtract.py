@@ -78,12 +78,12 @@ def ComputePotentialField(image):
         nb[B, :, :, 1:  ] = indices[ :, :, 0:-1]                # noqa: E203, E201, E221, E501, E202
         nb[T, :, :,  :-1] = indices[ :, :, 1:  ]                # noqa: E203, E201, E221, E501, E202
 
-    # determine those neighbors which are associated with a phase change
+    # determine;/ those neighbors which are associated with a phase change
     pc = np.full(shape_l, False)
     pc[E, :-1, ...] = pc[W, 1:, ...] = image[:-1, ...] != image[1:, ...]
-    pc[S, :, :-1, ...] = pc[N, :, 1:, ...] = image[:, :-1, ...] != image[:, 1:, ...]
+    pc[N, :, :-1, ...] = pc[S, :, 1:, ...] = image[:, :-1, ...] != image[:, 1:, ...]
     if dim > 2:
-        pc[B, :, :, :-1] = pc[T, :, :, 1:] = image[:, :, :-1] != image[:, :, 1:]
+        pc[T, :, :, :-1] = pc[B, :, :, 1:] = image[:, :, :-1] != image[:, :, 1: ]
 
     # all faces with phase changes are now removed from the neighbor list (set to -1), so we can form the
     # adjacency matrix
@@ -137,6 +137,8 @@ AddBall(image, center=np.floor(center), radius=radius, value=fluid)
 
 p1 = dimarr.copy()
 p2 = dimarr.copy()
+# p1[0], p1[1], p2[0], p2[1] = 0, 1, dimarr[0], dimarr[1]-1
+# AddBox(image, np.floor(p1), np.floor(p2), value=fluid)
 p1[0], p1[1], p2[0], p2[1] = 0, dimarr[1]*0.2, dimarr[0], dimarr[1]*0.3
 AddBox(image, np.floor(p1), np.floor(p2), 255)
 p1[0], p1[1], p2[0], p2[1] = 0, dimarr[1]*0.7, dimarr[0], dimarr[1]*0.8
@@ -168,6 +170,12 @@ if dim > 2:
 # network[1:-1, 1:-1, ...] = network_EN
 # network[1:-1, 1:-1, ...] |= network_ES
 
+# network by nodes
+# grad_shape = np.array(image.shape, dtype=int)-1
+# gradn = np.full(grad_shape, False)
+# grad_EN = (P[1:, 1:, ...] - P[:-1, :-1, ...])
+# grad_ES = (P[1:, :-1, ...] - P[:-1, 1:, ...])
+# grad_x = (P[:-1, :-1, ...] + P[:-1, 1:, ...] - P[1:, :-1, ...] - P[1:, 1:, ...]) * 0.5
 # find pores at the crossings
 map = network.astype(int)
 cross = np.zeros_like(map)
