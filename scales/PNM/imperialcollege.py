@@ -57,7 +57,7 @@ def network_from_statoil(path : str, prefix : str, options = {}):
     """
     def BoundaryThroats(net):
         # inlet and outlet throats
-        return np.where(np.any(net['throat.conns'] == -2, axis=1))[0], np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
+        return np.where(np.any(net['throat.conns'] == -2, axis=1))[0], np.where(np.any(net['throat.conns'] == -1, axis=1))
 
     scale = options.get('scale', float(1))
     fboundary = options.get('boundaries', BoundaryThroats)
@@ -150,12 +150,10 @@ def network_from_statoil(path : str, prefix : str, options = {}):
     # Use OpenPNM Tools to clean up network
     # Trim throats connected to 'inlet' or 'outlet' reservoirs
     trim_in, trim_out = fboundary(net)
-    # trim1 = np.where(np.any(net['throat.conns'] == -1, axis=1))[0]
     # Apply 'outlet' label to these pores
     outlets = network['throat.conns'][trim_out, 1]
     network['pore.outlet'] = False
     network['pore.outlet'][outlets] = True
-    # trim2 = np.where(np.any(net['throat.conns'] == -2, axis=1))[0]
     # Apply 'inlet' label to these pores
     inlets = network['throat.conns'][trim_in, 1]
     network['pore.inlet'] = False

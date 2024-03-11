@@ -5,6 +5,7 @@ import os
 import vtk
 import sys
 from ..image_analysis import TiffUtils
+import imperialcollege as ic
 
 
 def CheckSystemSettings():
@@ -227,7 +228,7 @@ def FilterPores(network, prop):
     return p_labels
 
 
-def ImportPNExtractToOpenPNM(path: str = '', ext: str = 'dat', scale: float = 1,
+def ImportPNExtractToOpenPNM(path: str, prefix: str, scale: float = 1,
                              axis: int = 0, silent: bool = True, dict_filter={'active': False}):
     if not path:
         raise ValueError('the path to the files is empty, cannot read anything!')
@@ -237,53 +238,59 @@ def ImportPNExtractToOpenPNM(path: str = '', ext: str = 'dat', scale: float = 1,
     else:
         printIf = lambda pstr: print(pstr)  # noqa: E731
 
-    coords, dpore, vpore, shape_pore = ReadPoresPNExtract(path, ext, silent=silent)
-    num_pores = len(coords[:, 0])
-    conns, dthroat, shape_throat = ReadThroatsPNExtract(path, ext, silent)
+    options = {}
+    options['scale'] = scale
+    if dict_filter.boundaries:
+        options['boundaries'] = dict_filter.boundaries
+    pn = ic.network_from_statoil(path=path, prefix=prefix, options=options)
 
-    # pnextract assigns a value of -1 to boundary throats
-    # however, openpnm assigns BCs to pores, so we need to label those instead
-    mask_1 = conns[:, 0] == -1
-    mask_2 = conns[:, 1] == -1
+    # coords, dpore, vpore, shape_pore = ReadPoresPNExtract(path, ext, silent=silent)
+    # num_pores = len(coords[:, 0])
+    # conns, dthroat, shape_throat = ReadThroatsPNExtract(path, ext, silent)
 
-    pores_bc = np.append(conns[mask_1, 1], conns[mask_2, 0])
-    pores_bc = np.unique(pores_bc)
+    # # pnextract assigns a value of -1 to boundary throats
+    # # however, openpnm assigns BCs to pores, so we need to label those instead
+    # mask_1 = conns[:, 0] == -1
+    # mask_2 = conns[:, 1] == -1
 
-    mask = mask_1 | mask_2
+    # pores_bc = np.append(conns[mask_1, 1], conns[mask_2, 0])
+    # pores_bc = np.unique(pores_bc)
 
-    conns = conns[~mask, :]
-    dthroat = dthroat[~mask]
+    # mask = mask_1 | mask_2
 
-    # conduct scaling if necessary
-    dthroat *= scale
-    dpore *= scale
-    coords *= scale
-    vpore *= scale**3
+    # conns = conns[~mask, :]
+    # dthroat = dthroat[~mask]
 
-    # create the network
-    pn = op.network.Network(coords=coords, conns=conns)
-    pn['pore.diameter'] = dpore
-    pn['throat.diameter'] = dthroat
-    pn['pore.volume'] = vpore
-    pn['pore.shape_factor'] = shape_pore
-    pn['throat.shape_factor'] = shape_throat
+    # # conduct scaling if necessary
+    # dthroat *= scale
+    # dpore *= scale
+    # coords *= scale
+    # vpore *= scale**3
 
-    # assign boundary labels
-    max_dim = np.max(coords[:, axis])
-    min_dim = np.min(coords[:, axis])
-    delta_dim = (max_dim - min_dim) * 0.5
+    # # create the network
+    # pn = op.network.Network(coords=coords, conns=conns)
+    # pn['pore.diameter'] = dpore
+    # pn['throat.diameter'] = dthroat
+    # pn['pore.volume'] = vpore
+    # pn['pore.shape_factor'] = shape_pore
+    # pn['throat.shape_factor'] = shape_throat
 
-    mask_outlet = np.zeros((num_pores), dtype=bool)
-    mask_outlet[pores_bc] = True
-    mask_inlet = mask_outlet
-    label_out = np.reshape(coords[:, axis] > (max_dim - delta_dim), (num_pores))
-    label_in = np.reshape(coords[:, axis] < (min_dim + delta_dim), (num_pores))
-    mask_outlet = mask_outlet & label_out
-    mask_inlet = mask_inlet & label_in
+    # # assign boundary labels
+    # max_dim = np.max(coords[:, axis])
+    # min_dim = np.min(coords[:, axis])
+    # delta_dim = (max_dim - min_dim) * 0.5
 
-    # filter with previously determined boundary pores
-    pn.set_label(label='inlet', pores=mask_inlet)
-    pn.set_label(label='outlet', pores=mask_outlet)
+    # mask_outlet = np.zeros((num_pores), dtype=bool)
+    # mask_outlet[pores_bc] = True
+    # mask_inlet = mask_outlet
+    # label_out = np.reshape(coords[:, axis] > (max_dim - delta_dim), (num_pores))
+    # label_in = np.reshape(coords[:, axis] < (min_dim + delta_dim), (num_pores))
+    # mask_outlet = mask_outlet & label_out
+    # mask_inlet = mask_inlet & label_in
+
+    # # filter with previously determined boundary pores
+    # pn.set_label(label='inlet', pores=mask_inlet)
+    # pn.set_label(label='outlet', pores=mask_outlet)
 
     printIf('Raw network:')
     printIf(pn)

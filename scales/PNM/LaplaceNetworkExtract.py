@@ -52,7 +52,7 @@ def AddBall(image, center, radius, value):
     return image
 
 
-def ComputePotentialField(image):
+def ComputePotentialField(image, source : float = 1):
     ###################
     # construct matrix
     ###################
@@ -85,6 +85,14 @@ def ComputePotentialField(image):
     if dim > 2:
         pc[T, :, :, :-1] = pc[B, :, :, 1:] = image[:, :, :-1] != image[:, :, 1: ]
 
+    # treat image edges as solid phase
+    # pc[E, -1, ...] = True
+    # pc[W, 0, ...] = True
+    # pc[N, :, -1, ...] = True
+    # pc[S, :, 0, ...] = True
+    if dim > 2:
+        pc[T, :, :, -1] = True
+        pc[B, :, :, 0] = True
     # all faces with phase changes are now removed from the neighbor list (set to -1), so we can form the
     # adjacency matrix
     nb[pc] = -1
@@ -103,8 +111,8 @@ def ComputePotentialField(image):
     Dbc = np.squeeze(np.sum(pc.astype(int), axis=0)).flatten()
     A += sparse.diags(Dbc)
 
-    B = np.ones(num_rows, dtype=float)
-    B[(image == solid).ravel()] = -1
+    B = np.full(num_rows, fill_value=source, dtype=float)
+    B[(image == solid).ravel()] = -source
 
     # x = linalg.spsolve(A, B)
     M = smoothed_aggregation_solver(A).aspreconditioner(cycle='V')
@@ -115,7 +123,7 @@ def ComputePotentialField(image):
     return sol
 
 
-ldim = (1500, 1500)
+ldim = (1501, 1501)
 
 solid = 0
 fluid = 255
@@ -126,14 +134,18 @@ radius = ldim[0] * 0.1
 
 center = np.array(ldim)
 dimarr = center.copy()
-center[0], center[1] = dimarr * 0.25
-AddBall(image, center=np.floor(center), radius=radius, value=fluid)
-center[0], center[1] = dimarr[0] * 0.75, dimarr[1] * 0.25
-AddBall(image, center=np.floor(center), radius=radius, value=fluid)
-center[0], center[1] = dimarr[0] * 0.25, dimarr[1] * 0.75
-AddBall(image, center=np.floor(center), radius=radius, value=fluid)
-center[0], center[1] = dimarr[0] * 0.75, dimarr[1] * 0.75
-AddBall(image, center=np.floor(center), radius=radius, value=fluid)
+
+center[0], center[1] = dimarr * 0.5
+AddBall(image, center=np.floor(center), radius=ldim[0]*0.3, value=fluid)
+
+# center[0], center[1] = dimarr * 0.25
+# AddBall(image, center=np.floor(center), radius=radius, value=fluid)
+# center[0], center[1] = dimarr[0] * 0.75, dimarr[1] * 0.25
+# AddBall(image, center=np.floor(center), radius=radius, value=fluid)
+# center[0], center[1] = dimarr[0] * 0.25, dimarr[1] * 0.75
+# AddBall(image, center=np.floor(center), radius=radius, value=fluid)
+# center[0], center[1] = dimarr[0] * 0.75, dimarr[1] * 0.75
+# AddBall(image, center=np.floor(center), radius=radius, value=fluid)
 
 p1 = dimarr.copy()
 p2 = dimarr.copy()
@@ -143,12 +155,12 @@ p1[0], p1[1], p2[0], p2[1] = 0, dimarr[1]*0.2, dimarr[0], dimarr[1]*0.3
 AddBox(image, np.floor(p1), np.floor(p2), 255)
 p1[0], p1[1], p2[0], p2[1] = 0, dimarr[1]*0.7, dimarr[0], dimarr[1]*0.8
 AddBox(image, np.floor(p1), np.floor(p2), 255)
-p1[0], p1[1], p2[0], p2[1] = dimarr[0]*0.2, 0, dimarr[0]*0.3, dimarr[1]
-AddBox(image, np.floor(p1), np.floor(p2), 255)
-p1[0], p1[1], p2[0], p2[1] = dimarr[0]*0.7, 0, dimarr[0]*0.8, dimarr[1]
-AddBox(image, np.floor(p1), np.floor(p2), 255)
+# p1[0], p1[1], p2[0], p2[1] = dimarr[0]*0.2, 0, dimarr[0]*0.3, dimarr[1]
+# AddBox(image, np.floor(p1), np.floor(p2), 255)
+# p1[0], p1[1], p2[0], p2[1] = dimarr[0]*0.7, 0, dimarr[0]*0.8, dimarr[1]
+# AddBox(image, np.floor(p1), np.floor(p2), 255)
 
-P = ComputePotentialField(image)
+P = ComputePotentialField(image, source=1e-3)
 
 # Extract network from solution
 # define tolerance to avoid FPA noise
