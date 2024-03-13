@@ -5,7 +5,7 @@ import os
 import vtk
 import sys
 from ..image_analysis import TiffUtils
-import imperialcollege as ic
+from . import imperialcollege as ic
 
 
 def CheckSystemSettings():
@@ -228,8 +228,60 @@ def FilterPores(network, prop):
     return p_labels
 
 
+def FindBoundaryThroats(net, axis=0):
+    r"""
+    Parameters
+    ----------
+    net : dict
+        dictionary with network properties, most important keys:
+        'pore.coords' and 'throat.conns'
+
+    Returns
+    -------
+    tuple
+        two lists (inlet, outlet) with throat IDs for labeled as boundary throats
+    """
+    coords = net['pore.coords']
+    conns = net['throat.conns']
+    max_dim = np.max(coords[:, axis])
+    min_dim = np.min(coords[:, axis])
+    delta_dim = (max_dim - min_dim) * 0.5
+
+    mask_0 = conns[:, 0] < 0
+    mask_1 = conns[:, 1] < 0
+    throats_bc = np.unique(np.append(np.where(mask_0)[0], np.where(mask_1)[0]))
+    pores_bc = np.unique(np.append(conns[mask_0, 1], conns[mask_1, 0]))
+
+    pores_in = np.where(coords[:, 0] < (min_dim + delta_dim))[0]
+    pores_out = np.where(coords[:, 0] > (max_dim - delta_dim))[0]
+    pores_in = pores_in[np.in1d(pores_in, pores_bc)]
+    pores_out = pores_out[np.in1d(pores_out, pores_bc)]
+
+    filter_throats_bc = np.full_like(mask_0, fill_value=False)
+    filter_throats_bc[throats_bc] = True
+
+    # inlet throats
+    mask_0 = np.in1d(conns[:, 1], pores_in)
+    mask_1 = np.in1d(conns[:, 0], pores_in)
+
+    mask_0 |= mask_1
+    mask_0 &= filter_throats_bc
+    throats_in = np.where(mask_0)[0]
+
+    # outlet throats
+    mask_0 = np.in1d(conns[:, 1], pores_out)
+    mask_1 = np.in1d(conns[:, 0], pores_out)
+
+    mask_0 |= mask_1
+    mask_0 &= filter_throats_bc
+    throats_out = np.where(mask_0)[0]
+
+    return throats_in, throats_out
+
+
 def ImportPNExtractToOpenPNM(path: str, prefix: str, scale: float = 1,
-                             axis: int = 0, silent: bool = True, dict_filter={'active': False}):
+                             axis: int = 0, silent: bool = True,
+                             dict_filter={'active': False}):
     if not path:
         raise ValueError('the path to the files is empty, cannot read anything!')
 
@@ -240,57 +292,9 @@ def ImportPNExtractToOpenPNM(path: str, prefix: str, scale: float = 1,
 
     options = {}
     options['scale'] = scale
-    if dict_filter.boundaries:
+    if 'boundaries' in dict_filter:
         options['boundaries'] = dict_filter.boundaries
     pn = ic.network_from_statoil(path=path, prefix=prefix, options=options)
-
-    # coords, dpore, vpore, shape_pore = ReadPoresPNExtract(path, ext, silent=silent)
-    # num_pores = len(coords[:, 0])
-    # conns, dthroat, shape_throat = ReadThroatsPNExtract(path, ext, silent)
-
-    # # pnextract assigns a value of -1 to boundary throats
-    # # however, openpnm assigns BCs to pores, so we need to label those instead
-    # mask_1 = conns[:, 0] == -1
-    # mask_2 = conns[:, 1] == -1
-
-    # pores_bc = np.append(conns[mask_1, 1], conns[mask_2, 0])
-    # pores_bc = np.unique(pores_bc)
-
-    # mask = mask_1 | mask_2
-
-    # conns = conns[~mask, :]
-    # dthroat = dthroat[~mask]
-
-    # # conduct scaling if necessary
-    # dthroat *= scale
-    # dpore *= scale
-    # coords *= scale
-    # vpore *= scale**3
-
-    # # create the network
-    # pn = op.network.Network(coords=coords, conns=conns)
-    # pn['pore.diameter'] = dpore
-    # pn['throat.diameter'] = dthroat
-    # pn['pore.volume'] = vpore
-    # pn['pore.shape_factor'] = shape_pore
-    # pn['throat.shape_factor'] = shape_throat
-
-    # # assign boundary labels
-    # max_dim = np.max(coords[:, axis])
-    # min_dim = np.min(coords[:, axis])
-    # delta_dim = (max_dim - min_dim) * 0.5
-
-    # mask_outlet = np.zeros((num_pores), dtype=bool)
-    # mask_outlet[pores_bc] = True
-    # mask_inlet = mask_outlet
-    # label_out = np.reshape(coords[:, axis] > (max_dim - delta_dim), (num_pores))
-    # label_in = np.reshape(coords[:, axis] < (min_dim + delta_dim), (num_pores))
-    # mask_outlet = mask_outlet & label_out
-    # mask_inlet = mask_inlet & label_in
-
-    # # filter with previously determined boundary pores
-    # pn.set_label(label='inlet', pores=mask_inlet)
-    # pn.set_label(label='outlet', pores=mask_outlet)
 
     printIf('Raw network:')
     printIf(pn)
@@ -317,7 +321,7 @@ def ImportPNExtractToOpenPNM(path: str, prefix: str, scale: float = 1,
     adj_sum = am.sum(axis=1, dtype=int)
     mask = adj_sum == 0
     mask = np.squeeze(np.asarray(mask))
-    bc_pore_mask = np.zeros(len(pn['pore.diameter']), dtype=bool)
+    bc_pore_mask = np.zeros(len(pn['pore.radius']), dtype=bool)
     bc_pore_mask[pn.pores('inlet')] = True
     bc_pore_mask[pn.pores('outlet')] = True
     mask = mask & (bc_pore_mask)
@@ -335,32 +339,6 @@ def ImportPNExtractToOpenPNM(path: str, prefix: str, scale: float = 1,
     if (len(p_isolated_pores) > 0):
         print('Found isolated pores after removal, something is wrong!')
 
-    dpore = pn['pore.diameter']
-    dthroat = pn['throat.diameter']
-    conns = pn['throat.conns']
-
-    mask_1 = dthroat >= dpore[conns[:, 0]]
-    mask_2 = dthroat >= dpore[conns[:, 1]]
-    mask = mask_1 | mask_2
-    if (np.count_nonzero(mask) > 0):
-        printIf('\nAdjusting throats with weird diameters')
-        dthroat[mask] = 0.9 * np.min(dpore[conns[mask, :]])
-        num_adjusted = np.count_nonzero(mask)
-        printIf('Adjusted ' + str(num_adjusted) + ' pores')
-
-    pn['throat.diameter'] = dthroat
-
-    printIf('\nAssigning geometric properties\n')
-    mods = op.models.collections.geometry.spheres_and_cylinders
-    mods.pop('throat.diameter', None)
-    mods.pop('pore.diameter', None)
-    mods.pop('pore.seed', None)
-    mods.pop('pore.volume', None)
-    mods.pop('pore.shape_factor', None)
-    mods.pop('throat.shape_factor', None)
-    mods['hydraulic_conductance'] = op.models.physics.hydraulic_conductance.valvatne_blunt
-    pn.add_model_collection(mods)
-    pn.regenerate_models()
     printIf('Updated Network with geometric properties:')
     printIf(pn)
 
