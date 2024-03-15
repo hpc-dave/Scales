@@ -1,3 +1,4 @@
+import collections
 import numpy as np
 from numpy import matlib
 from matplotlib import pyplot as plt
@@ -7,6 +8,7 @@ import scipy.sparse.linalg as linalg
 from scipy.sparse.linalg import gmres
 from pyamg.aggregation import smoothed_aggregation_solver
 import skimage
+
 
 def PlotPField(P):
     plt.style.use('_mpl-gallery')
@@ -32,8 +34,6 @@ def PlotNetwork(network, pores=None, throats=None):
     if throats is not None:
         X, Y, Z = throats
         ax.scatter(X, Y, Z, '$|-|$')
-
-
 
 
 def DetermineEigenFeatures(hess):
@@ -114,7 +114,7 @@ def ComputePotentialField(image, source: float = 1, image_edge='NoFlux'):
         nb[B, :, :, 1:  ] = indices[ :, :, 0:-1]                # noqa: E203, E201, E221, E501, E202
         nb[T, :, :,  :-1] = indices[ :, :, 1:  ]                # noqa: E203, E201, E221, E501, E202
 
-    # determine;/ those neighbors which are associated with a phase change
+    # determine those neighbors which are associated with a phase change
     pc = np.full(shape_l, False)
     pc[E, :-1, ...] = pc[W, 1:, ...] = image[:-1, ...] != image[1:, ...]
     pc[N, :, :-1, ...] = pc[S, :, 1:, ...] = image[:, :-1, ...] != image[:, 1:, ...]
@@ -212,21 +212,207 @@ def LocalExtrema(image, mode: str = 'max', allow_borders: bool = True, indices: 
     return np.nonzero(extrema) if indices else extrema
 
 
-def FindPoresAndFaces(P: np.array, network: np.array):
+def FindPoresAndFaces(P: np.array, network: np.array, indices: bool = True):
+    r"""
+    Determines location of pores and faces
+
+    Parameters
+    ----------
+    P: np.array
+        potential field of size M, N[, P]
+    network: np.array
+        network in the from of a field, where pathways/ridges are assigned
+        a nonzero value
+    indices: bool
+        determines, if either indices or fields are returned by this function
+
+    Returns
+    -------
+    Depending on the value of 'indices', either two tuples of indices
+    are returned or two marked boolean fields
+    """
     P_manip = P.copy()
     P_manip[~network] = 0
 
     P_manip = np.abs(P_manip)
     pores = skimage.morphology.local_maxima(P_manip,
                                             allow_borders=False,
-                                            indices=True)
+                                            indices=False)
 
     P_manip *= -1
     P_manip[~network] = np.min(P_manip)
     faces = skimage.morphology.local_maxima(P_manip,
                                             allow_borders=False,
-                                            indices=True)
-    return pores, faces
+                                            indices=False)
+
+    if indices:
+        return np.nonzero(pores), np.nonzero(faces)
+    else:
+        return pores, faces
+
+
+def BreadthFirstSearch(A: sparse.csr_array, pores, network_coords, start: int, away_from: int = -1):
+    # https://stackoverflow.com/questions/47896461/get-shortest-path-to-a-cell-in-a-2d-array-in-python
+    queue = collections.deque([start])
+    seen = set([start])
+    p_ref = network_coords[away_from if away_from > -1 else start, :]
+    min_dist = np.sum((p_ref - network_coords[start, :])**2)
+    while queue:
+        row = queue.popleft()
+        coord = network_coords[row, :]
+        if tuple(coord) in pores:
+            return row
+        for pos in range(A.indptr[row], A.indptr[row+1]):
+            next_id = A.indices[pos]
+            if (next_id not in seen) and (np.sum((network_coords[next_id] - p_ref)**2) > min_dist):
+                queue.append(next_id)
+                seen.add(next_id)
+    # if we end up here, no pore was found and this is either a dead end or a boundary
+    return -1
+
+
+def EstablishConnections(P: np.array, network: np.array, pores: np.array, faces: np.array):
+
+    # adjacency matrix for the network voxels
+    dim = len(P.shape)
+    l_face = np.transpose(np.array(faces))
+    l_pore = np.transpose(np.array(pores))
+    num_faces = l_face.shape[0]
+    num_pores = l_pore.shape[0]
+
+    # Compute distance map of all points and remove those who are more than
+    # one diagonal away. Note that a diagonally located point is
+    # sqrt(dim* (1^2)) distant. We can save the (expensive) sqrt operation by
+    # comparing it to the squared distance. Here, a padding is added to account
+    # for floating point errors
+    net_coords = np.transpose(np.array(np.nonzero(network)))
+    dist_map = net_coords[..., np.newaxis]
+    # dist_map = np.swapaxes(dist_map, axis1=0, axis2=1)
+    dist_map = dist_map - np.swapaxes(dist_map, axis1=0, axis2=2)
+    dist_map = np.sum(dist_map**2, axis=1)
+    dist_map[dist_map > (dim+0.5)] = 0
+    dist_map = sparse.coo_array(dist_map)
+
+    # here we need to convert the reduced graph (only actual network-pixel/voxel are used)
+    # to an image wide graph, so we can relate the actual positions to each other
+    graph = dist_map.astype(bool).astype(int)
+    # pore_ids = indices[pores]
+    # face_ids = indices[faces]
+    # net_ids = indices[network][..., np.newaxis]
+
+    # row = (graph * np.tile(net_ids, reps=(1, net_ids.size))).data
+    # net_ids = np.transpose(net_ids)
+    # col = (graph * np.tile(net_ids, reps=(net_ids.size, 1))).data
+    # v = np.full((col.size), fill_value=True)
+    # graph = sparse.coo_array(row, col, v).tocsr()
+
+    # net_coords = dict(zip(indices[network].tolist(), np.array(net_coords).tolist()))
+    pore_coords = dict(zip([tuple(i) for i in l_pore], range(num_pores)))
+    # map_coords_to_face = dict(zip([tuple(i) for i in faces], range(num_faces)))
+    map_coords_to_row = dict(zip([tuple(i) for i in net_coords], range(net_coords.shape[0])))
+    row_to_pore = dict(zip([ map_coords_to_row[tuple(l_pore[i,:].tolist())] for i in range(num_pores)], range(num_pores)))
+    row_to_pore[-1] = -1  # default for invalid values
+    conns = np.full((num_faces, 2), fill_value=-1)
+    graph = graph.tocsr()
+    for i in range(num_faces):
+        f_coord = l_face[i, :]
+        row_start = map_coords_to_row[tuple(f_coord)]
+        p1 = BreadthFirstSearch(A=graph, pores=pore_coords, network_coords=net_coords, start=row_start)
+        if p1 == -1:
+            conns[i, :] = -1
+            continue
+        p2 = BreadthFirstSearch(A=graph, pores=pore_coords, network_coords=net_coords, start=row_start, away_from=p1)
+        if p2 == -1:
+            p1, p2 = p2, p1
+        conns[i, :] = [row_to_pore[p1], row_to_pore[p2]]
+
+    return conns
+
+
+
+
+
+
+
+
+
+    # determine those neighbors which are associated with a phase change
+    # pc = np.full(shape_l, False)
+    # pc[E, :-1, ...] = pc[W, 1:, ...] = image[:-1, ...] != image[1:, ...]
+    # pc[N, :, :-1, ...] = pc[S, :, 1:, ...] = image[:, :-1, ...] != image[:, 1:, ...]
+    # if dim > 2:
+    #     pc[T, :, :, :-1] = pc[B, :, :, 1:] = image[:, :, :-1] != image[:, :, 1: ]
+
+    # def FillStencil(v, P, ind, dim):
+    #     if dim == 2:
+    #         for i in range(-1, 2):
+    #                 for j in range(-1, 2):
+    #                     v[i, j] = P[ind[0]+i, ind[1]+j]
+    #     else:
+    #         for i in range(-1, 2):
+    #                 for j in range(-1, 2):
+    #                     for k in range(-1, 2):
+    #                         v[i, j, k] = P[ind[0] + i, ind[1] + j, ind[2] + k]
+
+    # dim = len(np.array.shape)
+    # num_faces = faces.shape[0]
+    # conns = np.full((num_faces, 2), fill_value=-1, dtype=int)
+
+    # # look up table for the pores, exploiting efficient hashing
+    # t_pores = dict.fromkeys([tuple(i) for i in pores.tolist()])
+
+    # Pabs = np.abs(P)
+    # Pabs[~network] = 0
+
+    # stencil_shape=list(3)
+    # for i in range(1,dim):
+    #     stencil_shape.append(3)
+    # stencil_shape = tuple(stencil_shape)
+
+    # for i in range(num_faces):
+
+    #     v = np.array(stencil_shape, dtype=P.dtype)
+    #     ind = faces[i, :]
+    #     FillStencil(v, Pabs, faces[i,:], dim)
+    #     p0 = np.argmax(v)
+    #     v[p0] = 0
+    #     p1 = np.argmax(v)
+    #     # test if the distance between the points is less than
+    #     # one cell diagonal
+    #     count, tries = 0, 2 if dim == 2 else 8
+    #     while (np.sum((p1-p0)**2) < 2) & (count < tries):
+    #         v[p1] = 0
+    #         p1=np.argmax(v)
+    #         count += 1
+    #     if count == tries:
+
+
+
+
+
+        # tracer_lo = faces[i,:].copy()
+        # tracer_up = tracer_lo.copy()
+        # v_search = np.full((dim), fill_value=-1, dtype='int8')
+
+        # p_old = tracer_lo.copy()
+        # while True:
+        #     tracer_lo += v_search
+        #     mask = stencil.copy()
+        #     ind = tuple((np.ones((dim), dtype=v_search.dtype) - v_search ).tolist())
+        #     mask[ind] = False
+        #     p_lo = tracer_lo - 1
+        #     p_up = tracer_lo + 2
+        #     v = np.array(stencil_shape, dtype=network.dtype)
+        #     if dim == 2:
+        #         for i in range(0, 3):
+        #             for j in range(0, 3):
+        #                 v[i, j] = network[p_lo[0]+i, p_lo[1]+j]
+        #     else:
+        #         for i in range(0, 3):
+        #             for j in range(0, 3):
+        #                 for k in range(0, 3):
+        #                     v[i, j, k] = network[p_lo[0]+i, p_lo[1]+j, p_lo[2]+k]
+        #     candidates = np.nonzero(v & mask)
 
 
 def GetNetworkFeatures(image: np.array,
@@ -289,6 +475,8 @@ def GetNetworkFeatures(image: np.array,
         raise Warning('the sign of the potential field values\
                       does not align with the specified image phases')
 
+    # think about ridges maybe instead: https://scikit-image.org/docs/stable/auto_examples/edges/plot_ridge_filter.html
+    # could be computationally preferable to Lee, since Lee uses an iterative algorithm
     # skeletonize the image according to Lee
     network = skimage.morphology.skeletonize(image, method='lee').astype(bool)
     if include_solid:
@@ -296,7 +484,9 @@ def GetNetworkFeatures(image: np.array,
 
     # finding pores and faces along the skeleton, depending on the potential field
     # note how we assign the faces as throats right now, that should be changed soon
-    pores, throats = FindPoresAndFaces(P, network)
+    pores, faces = FindPoresAndFaces(P, network)
+
+    throats = EstablishConnections(network=network, P=P, pores=pores, faces=faces)
 
     # assign labels
     p_phase0 = np.where(image[pores] < threshold)[0]
@@ -304,10 +494,25 @@ def GetNetworkFeatures(image: np.array,
     t_phase0 = np.where(image[pores] < threshold)[0]
     t_phase1 = np.where(image[pores] > threshold)[0]
 
+    # connecting networks
+    # try strongest gradient method starting from solid: skimage.filters.rank.gradient
+    # also this one here might work: skimage.segmentation.inverse_gaussian_gradient
+
     return np.nonzero(network), (pores, p_phase0, p_phase1), (throats, t_phase0, t_phase1)
 
 
-ldim = (30, 30, 30)
+A = np.zeros((5,5))
+A[0,1] = 1
+A[0,4] = 2
+A[1,2] = 5
+A[2,3] = 3
+A[3,4] = 4
+A[4,0] = 1
+A = sparse.csr_array(A)
+for ind in range(A.indptr[0], A.indptr[1]):
+    print(A.indices[ind])
+
+ldim = (30, 40)
 
 solid = 0
 fluid = 255
@@ -319,11 +524,13 @@ radius = ldim[0] * 0.1
 center = np.array(ldim)
 dimarr = center.copy()
 
-center[0], center[1], center[2] = dimarr * 0.35
-center[1] , center[2] = dimarr[1]*0.5, dimarr[2]*0.5
-AddBall(image, center=np.floor(center), radius=ldim[0]*0.25, value=fluid)
-center[0] = dimarr[0] * 0.8
-AddBall(image, center=np.floor(center), radius=ldim[0]*0.25, value=fluid)
+# center[0], center[1], center[2] = dimarr * 0.35
+# center[1] , center[2] = dimarr[1]*0.5, dimarr[2]*0.5
+center[0], center[1]= dimarr * 0.35
+center[1] = dimarr[1]*0.5
+AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
+center[0] = dimarr[0] * 0.65
+AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
 
 # center[0], center[1] = dimarr * 0.5
 # AddBall(image, center=np.floor(center), radius=ldim[0]*0.3, value=fluid)
@@ -398,7 +605,7 @@ cross = cross > 2
 imsol = P.copy()
 imsol = imsol - np.min(imsol)
 imsol = imsol / np.max(imsol) * 255
-# plt.imshow(imsol)
+plt.imshow(imsol)
 
 network, pores, throats = GetNetworkFeatures(image, P, include_solid=False)
 
