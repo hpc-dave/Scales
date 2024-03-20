@@ -49,6 +49,21 @@ def TwoThroatsOnePore(image):
     AddBox(image, point1=p0, point2=p1, value=255)
 
 
+def FourThroatsOnePore(image):
+    center = (np.asarray(image.shape) / 2).astype(int)
+    radius = int(np.min(center)*0.5)
+    p1 = center.copy()
+    p2 = center.copy()
+    p1[0], p2[0] = 0, image.shape[0]
+    p1[1] = center[1]-radius*2/3
+    p2[1] = p1[1] + radius/2
+    AddBall(image, center=center, radius=radius, value=255)
+    AddBox(image, np.floor(p1), np.floor(p2), value=255)
+    p1[1] = center[1]+radius*2/3
+    p2[1] = p1[1] - radius/2
+    AddBox(image, np.floor(p1), np.floor(p2), value=255)
+
+
 def TwoTouchingPoresInSolid(image):
     center = (np.asarray(image.shape) / 2).astype(int)
     radius = int(np.min(center)*0.3)

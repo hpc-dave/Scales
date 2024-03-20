@@ -767,7 +767,8 @@ fluid = 255
 image = np.full(shape=ldim, fill_value=solid, dtype='uint8')
 
 # mpim.TwoTouchingPoresInSolid(image=image)
-mpim.TwoThroatsOnePore(image=image)
+# mpim.TwoThroatsOnePore(image=image)
+mpim.FourThroatsOnePore(image=image)
 
 # radius = ldim[0] * 0.1
 
