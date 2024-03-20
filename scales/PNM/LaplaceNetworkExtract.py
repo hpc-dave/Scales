@@ -4,9 +4,10 @@ from matplotlib import pyplot as plt
 from scipy import sparse
 from scipy import ndimage
 from scipy import spatial
-from scipy.sparse.linalg import gmres
+from scipy.sparse.linalg import gmres as solver
 from pyamg.aggregation import smoothed_aggregation_solver
 import skimage
+import ModelPorousImage as mpim
 
 
 def PlotPField(P):
@@ -118,9 +119,50 @@ def AddBall(image, center, radius, value):
 
 
 def ComputePotentialField(image, source: float = 1, image_edge='NoFlux'):
-    ###################
-    # construct matrix
-    ###################
+    r"""
+    Computes a potential field on an image of a porous media
+
+    Parameters
+    ----------
+    image: array_like
+        The (binary) image file of size [Nx, Ny [,Nz]] from which the image should be extracted.
+        It does not to be strictly speaking binary, as long as all points
+        within the same phase are labeled the same.
+    source: float
+        Source term to be applied during the computation.
+    image_edge: str
+        Indicator, how the image edge should be treated. By default, a
+        no-flux boundary is applied. Alternatively, a Dirichlet boundary
+        may be imposed
+
+    Returns
+    -------
+    Array of type float and size [Nx, Ny [,Nz]] with the potential values
+
+    Notes
+    -----
+    Here, following equation is solved to arrive at the potential field $\phi$:
+    .. math:
+        \nabla^2 \phi = \beta_i
+    where the sign of source term $\beta$ takes differs between the phases
+    $\Omega_0$ and $\Omega_1:
+    .. math:
+        \beta_i
+        \begin{cases}
+            \beta & for i \in \Omega_0 \\
+            -\beta & for i \in \Omega_1
+        \end{cases}
+    At the boundary \Gamma between the phases, a Dirichlet condition is enforced:
+    .. math:
+        \phi_\Gamma = 0
+    For images, those cell faces between points of different phase values are considered
+    the location of the boundary condition.
+    At the image boundary, the user may choose to either enforce a No-flux or Dirichlet
+    boundary condition.
+
+    The resulting matrix system is solved by an iterative solving algorithm (e.g. GMRES or BiCGStab)
+    with an algebraic multigrid preconditioner.
+    """
     dim = len(image.shape)
     num_rows = image.size
     num_nb = dim * 2
@@ -183,14 +225,34 @@ def ComputePotentialField(image, source: float = 1, image_edge='NoFlux'):
 
     # x = linalg.spsolve(A, B)
     M = smoothed_aggregation_solver(A).aspreconditioner(cycle='V')
-    x, _ = gmres(A, B, atol=1e-8, M=M)
+    x, _ = solver(A, B, atol=1e-8, M=M)
 
     sol = np.reshape(x, image.shape)
 
     return sol
 
 
-def FindPoresAndConstrictions(P: np.array, network: np.array, indices: bool = True):
+def Skeletonize(image, include_solid: bool = True, pad_width=3):
+    im_loc = np.pad(image, pad_width=pad_width, mode='edge')
+    # think about ridges maybe instead: https://scikit-image.org/docs/stable/auto_examples/edges/plot_ridge_filter.html
+    # potential candidate: skimage.filters.sato(P, sigmas=[5])
+    # could be computationally preferable to Lee, since Lee uses an iterative algorithm
+    # skeletonize the image according to Lee
+    network = skimage.morphology.skeletonize(im_loc, method='lee').astype(bool)
+    if include_solid:
+        network |= skimage.morphology.skeletonize(np.invert(im_loc), method='lee').astype(bool)
+    dim = len(image.shape)
+    if pad_width == 0:
+        return network
+    else:
+        if dim == 2:
+            network = network[pad_width:-pad_width, pad_width:-pad_width]
+        else:
+            network = network[pad_width:-pad_width, pad_width:-pad_width, pad_width:-pad_width]
+        return network
+
+
+def FindPoresAndConstrictions(P: np.array, network: np.array, indices: bool = True, include_solid: bool = True):
     r"""
     Determines location of pores and constrictions
 
@@ -203,25 +265,43 @@ def FindPoresAndConstrictions(P: np.array, network: np.array, indices: bool = Tr
         a nonzero value
     indices: bool
         determines, if either indices or fields are returned by this function
+    include_solid: bool
+        applies the identification procedure to the solid phase, too
 
     Returns
     -------
     Depending on the value of 'indices', either two tuples of indices
     are returned or two marked boolean fields
+
+    Notes
+    -----
+    The position of pores and constrictions are given by local maxima and minima
+    on the potential field weighted network skeleton. Theoretically, the network
+    for fluid and solid phase can be extracted simultaneously. However, the network
+    can be problematic at very narrow crevices, depending on the network generation
+    algorithm. To increase the robustness of this step, determining fluid and solid
+    pores is conducted separately.
     """
-    P_manip = P.copy()
-    P_manip[~network] = 0
+    pores = np.full_like(P, dtype=bool, fill_value=False)
+    constr = np.full_like(P, dtype=bool, fill_value=False)
+    for i in range(1+include_solid):
+        if i == 0:
+            mask = P > 0
+        else:
+            mask = P < 0
+        P_manip = P.copy()
+        P_manip[~(mask & network)] = 0
 
-    P_manip = np.abs(P_manip)
-    pores = skimage.morphology.local_maxima(P_manip,
-                                            allow_borders=False,
-                                            indices=False)
+        P_manip = np.abs(P_manip)
+        pores |= skimage.morphology.local_maxima(P_manip,
+                                                 allow_borders=False,
+                                                 indices=False)
 
-    P_manip *= -1
-    P_manip[~network] = np.min(P_manip)
-    constr = skimage.morphology.local_maxima(P_manip,
-                                             allow_borders=False,
-                                             indices=False)
+        P_manip *= -1
+        P_manip[~(mask & network)] = np.min(P_manip)
+        constr |= skimage.morphology.local_maxima(P_manip,
+                                                  allow_borders=False,
+                                                  indices=False)
 
     if indices:
         return np.nonzero(pores), np.nonzero(constr)
@@ -229,14 +309,17 @@ def FindPoresAndConstrictions(P: np.array, network: np.array, indices: bool = Tr
         return pores, constr
 
 
-def FindConnectingPore_BFS(A: sparse.csr_array, pores, network_coords, start: int, extent, away_from: int = -1):
+def FindConnectingPore_BFS(P, A: sparse.csr_array, pores, network_coords, start: int, extent, away_from: int = -1):
     r"""
     Finds the connecting pore via a breadth-first-search approach
 
     Parameters
     ----------
+    P: array_like
+        potential field for determining the appropriate phase and exclude network connections due to discretization
+        issues
     A: csr_array
-        Adjacency matrix of discretized network. This should ONLY contain the nearest neighbors/surrounding cells
+        adjacency matrix of discretized network. This should ONLY contain the nearest neighbors/surrounding cells
     pores
         tuple of coordinates of the determined pores
     network_coords
@@ -261,28 +344,76 @@ def FindConnectingPore_BFS(A: sparse.csr_array, pores, network_coords, start: in
     """
     queue = collections.deque([start])
     seen = set([start])
-    p_ref = network_coords[away_from if away_from > -1 else start, :]
-    min_dist = np.sum((p_ref - network_coords[start, :])**2)
+    phase = P[tuple(network_coords[start])] > 0
+    if away_from == -1:
+        p_ref = network_coords[start]
+        min_dist = 0
+    else:
+        p_ref = network_coords[away_from]
+        min_dist = 3    # note that here we use the squared distance, so we can save a sqrt call
+
+    is_boundary = False
     while queue:
         row = queue.popleft()
         coord = network_coords[row, :]
         # label as boundary pore
-        if np.any((coord == 0) | (coord == extent)):
-            return -1, True
+        if np.any((coord < 2) | ((extent - coord) < 2)):
+            is_boundary = True
         # provide found pore
         if tuple(coord) in pores:
             return row, False
         # test for next adjacent cells
         for pos in range(A.indptr[row], A.indptr[row+1]):
+            # here we test each potential connection, if it
+            # a) is already in the cue (seen-array)
+            # b) is in the correct phase
+            # c) far away from the excluded point
             next_id = A.indices[pos]
-            if (next_id not in seen) and (np.sum((network_coords[next_id] - p_ref)**2) > min_dist):
+            next_coords = network_coords[next_id]
+            phase_next = P[tuple(next_coords)] > 0
+            if (next_id not in seen) and (phase_next == phase) and (np.sum((next_coords - p_ref)**2) > min_dist):
                 queue.append(next_id)
                 seen.add(next_id)
-    # if we end up here, no pore was found and this is a dead end
-    return -1, False
+    # if we end up here, no pore was found and this is either a dead end or a boundary
+    return -1, is_boundary
 
 
 def EstablishConnections(P: np.array, network: np.array, pores: np.array, constr: np.array):
+    r"""
+    Determines the connectivity between pores by performing a breadth-frist search
+    along the network, starting from the constrictions
+
+    Parameters
+    ----------
+    P: array_like
+        Potential field of dimension [M, N [,P]]
+    network: array_like
+        network in the porous media in the form of a mask, where cells belonging to the network
+        are labeled > 0
+    pores: tuple
+        coordinates of pores of form (array[Np], array[Np], [array[Np]])
+    constr: tuple
+        coordinates of constrictions of form (array[Nc], array[Nc], [array[Nc]])
+
+    Returns
+    -------
+    A list of connections of form [Nc, 2] and mask of form [Nc], which of those are dead ends
+
+    Notes
+    -----
+    Np and Nc denote the number of pores and constrictions.
+    The general algorithm works along following steps:
+        1) assign each network point a unique ID
+        2) compute a distance map between each network point
+        3) remove all the values which are not surrounding
+           the respective point, effectively computing
+           an adjacency matrix of the network
+        4) start from each constriction and search twice with
+           a breadth-first seach algorithm, to find
+           the connecting pores
+        5) label those constrictions, which are connected to only
+           one pore as dead ends
+    """
     # adjacency matrix for the network voxels
     dim = len(P.shape)
     l_constr = np.transpose(np.array(constr))
@@ -317,13 +448,13 @@ def EstablishConnections(P: np.array, network: np.array, pores: np.array, constr
     for i in range(num_constr):
         f_coord = l_constr[i, :]
         row_start = map_coords_to_row[tuple(f_coord)]
-        p1, at_boundary = FindConnectingPore_BFS(A=graph, pores=pore_coords, network_coords=net_coords,
+        p1, at_boundary = FindConnectingPore_BFS(P=P, A=graph, pores=pore_coords, network_coords=net_coords,
                                                  extent=extent, start=row_start)
         if p1 == -1 and not at_boundary:
             dead_end[i] = True
             conns[i, :] = -1
             continue
-        p2, at_boundary = FindConnectingPore_BFS(A=graph, pores=pore_coords, network_coords=net_coords,
+        p2, at_boundary = FindConnectingPore_BFS(P=P, A=graph, pores=pore_coords, network_coords=net_coords,
                                                  extent=extent, start=row_start, away_from=p1)
         if p2 == -1:
             dead_end[i] = not at_boundary
@@ -333,20 +464,70 @@ def EstablishConnections(P: np.array, network: np.array, pores: np.array, constr
     return conns, dead_end
 
 
-def ConnectTwoNetworks(network, P, pores, imprint_in_network: bool = True):
+def profile_line(image, src, dst, spacing: int = 2, order=1):
+    r"""
+    Steps along a line and interpolates the values
 
-    def profile_line(image, src, dst, spacing=2, order=1):
-        # https://stackoverflow.com/questions/55651307/how-to-extract-line-profile-ray-trace-line-through-3d-matrix-ndarray-3-dim-b
-        # I believe that can be done more elegant, but premature optimization is the source of
-        # all bugs, so let's leave it for now like this. Note, that map_coordinates uses
-        # spline interpolation. Check if that is really necessary or if we can be satisfied just with
-        # the closest discrete value
-        n_p = int(np.ceil(spatial.distance.euclidean(src, dst) / spacing))
-        coords = []
-        for s, e in zip(src, dst):
-            coords.append(np.linspace(s, e, n_p, endpoint=False))
-        return ndimage.map_coordinates(image, coords, order=order), coords
+    Parameters
+    ----------
+    image: array_like
+        Image of dimension D to get the value from
+    src: array_like
+        coordinates of starting point with D entries
+    dst: array_like
+        coordinates of end point with D entries
+    spacing: int
+        step width for the interpolation
+    order:
+        order of the spline interpolation
 
+    Returns
+    -------
+    array with profile values and coordinates of the points
+
+    Notes
+    -----
+    https://stackoverflow.com/questions/55651307/how-to-extract-line-profile-ray-trace-line-through-3d-matrix-ndarray-3-dim-b
+    I believe that can be done more elegant, but premature optimization is the source of
+    all bugs, so let's leave it for now like this. Note, that map_coordinates uses
+    spline interpolation. Check if that is really necessary or if we can be satisfied just with
+    the closest discrete value
+    """
+    n_p = int(np.ceil(spatial.distance.euclidean(src, dst) / spacing))
+    coords = []
+    for s, e in zip(src, dst):
+        coords.append(np.linspace(s, e, n_p, endpoint=False))
+    return ndimage.map_coordinates(image, coords, order=order), coords
+
+
+def ConnectTwoNetworks(P, pores: tuple, network=None):
+    r"""
+    Finds connections between two networks, with respect to the potential field
+
+    Parameters
+    ----------
+    P: array_like
+        potential field of shape [Nx, Ny [,Nz]]
+    pores: tuple
+        tuple of coordinates of each pore
+    network: array_like
+        if provided, it has to be a boolean array of shape [Nx, Ny [,Nz]] and the newly found
+        connections will be imprinted on it
+
+    Returns
+    -------
+    tuple of connectivity array and coordinates of newly found constrictions
+
+    Notes
+    -----
+    The connectivity between two pores in different phases does not follow the same logic as the
+    network estraction within a single phase. Mainly because no such a connection is not
+    dictated by a constriction. Here, the connection is established via a direct line between
+    two pores. Connections are established, if along the connecting axis from solid ($\beta < 0 $)
+    to fluid phase (\beta > 0) the potential field is monotonously growing or monotonously decaying
+    respectively.
+    This is determined via the second derivative along the connecting axis.
+    """
     num_pores = pores[0].shape[0]
     dim = len(pores)
     # create connection matrix with all pores in different phases
@@ -392,7 +573,7 @@ def ConnectTwoNetworks(network, P, pores, imprint_in_network: bool = True):
     constr = constr[mask, :]
 
     # add connections to network
-    if imprint_in_network:
+    if network is not None:
         for n in range(conn.shape[0]):
             p0, p1 = [], []
             ind_p0, ind_p1 = conn[n, 0], conn[n, 1]
@@ -422,20 +603,56 @@ def RemoveDeadEnds(conns, constr, dead_ends):
     return conns[~dead_ends, :], constr[~dead_ends, :]
 
 
-def ThickenSkeleton(skeleton):
-    if skeleton is tuple:
-        raise Exception('Cannot thicken skeleton just on coordinates yet')
-    mask = np.zeros_like(skeleton, dtype='uint8')
-    mask[1:, ...] += skeleton[:-1, ...]
-    mask[:-1, ...] += skeleton[1:, ...]
-    mask[:, 1:, ...] += skeleton[:, :-1, ...]
-    mask[:, :-1, ...] += skeleton[:, 1:, ...]
-    if len(skeleton.shape) > 2:
-        mask[:, :, 1:] += skeleton[:, :, :-1]
-        mask[:, :, :-1] += skeleton[:, :, 1:]
+def DetermineBoundaryPores(P, pores, conns):
+    r"""
+    Determines, which pores are connected to a boundary, based on the potential field
 
-    mask = mask > 2
-    return mask | skeleton
+    Parameters
+    ----------
+    P: array_like
+        potential field
+    pores: tuple
+        coordinates of the pores
+    conns:
+        so far known connections between the pores
+
+    Returns
+    -------
+    array with pore IDs which have been determined as boundary pores
+
+    Notes
+    -----
+    Currently, this is rather brute force. For each pore the potential along
+    a line perpendicular to each bondary is determined and the presence of any
+    in between bumps detected by analysis of the second derivative.
+    Potential improvements include additional filter criteria or pathfinding
+    along potential ridges
+    """
+    if np.any(conns[:, 1] == -1):
+        raise Exception('all boundary pore values need to be marked in the first column')
+
+    dim = len(P.shape)
+
+    # only investigate pores which are not yet labeled as boundary pores
+    p_bc = conns[conns[:, 0] != -1, 1]
+    mask_bc = np.full_like(p_bc, fill_value=False, dtype=bool)
+    # for now brute force
+    for i in range(p_bc.size):
+        p_id = p_bc[i]
+        src = [pores[d][p_id] for d in range(dim)]
+        for d in range(dim):
+            dst = [s for s in src]  # deep copy without big workarounds
+            # low
+            dst[d] = 0
+            profile, _ = profile_line(P, src=src, dst=dst)
+            d2 = profile[:-2] - 2 * profile[1:-1] + profile[2:] if profile.size > 3 else True
+            mask_bc[i] |= np.all(d2 > 0) or np.all(d2 < 0)
+            # high
+            dst[d] = P.shape[d]-1
+            profile, _ = profile_line(P, src=src, dst=dst)
+            d2 = profile[:-2] - 2 * profile[1:-1] + profile[2:] if profile.size > 3 else True
+            mask_bc[i] |= np.all(d2 > 0) or np.all(d2 < 0)
+    return p_bc[mask_bc]
 
 
 def GetNetworkFeatures(image: np.array,
@@ -502,10 +719,10 @@ def GetNetworkFeatures(image: np.array,
     # potential candidate: skimage.filters.sato(P, sigmas=[5])
     # could be computationally preferable to Lee, since Lee uses an iterative algorithm
     # skeletonize the image according to Lee
-    network = skimage.morphology.skeletonize(image, method='lee').astype(bool)
-    if include_solid:
-        network |= skimage.morphology.skeletonize(np.invert(image), method='lee').astype(bool)
-    # network = ThickenSkeleton(skeleton=network)
+    # network = skimage.morphology.skeletonize(image, method='lee').astype(bool)
+    # if include_solid:
+    #     network |= skimage.morphology.skeletonize(np.invert(image), method='lee').astype(bool)
+    network = Skeletonize(image, include_solid=include_solid, pad_width=0)
 
     # finding pores and constrictions along the skeleton, depending on the potential field
     pores, constr = FindPoresAndConstrictions(P, network)
@@ -520,15 +737,27 @@ def GetNetworkFeatures(image: np.array,
 
     # in the case the solid is included, connect the two networks
     if include_solid:
-        conn, cstr = ConnectTwoNetworks(network=network, P=P, pores=pores, imprint_in_network=True)
+        conn, cstr = ConnectTwoNetworks(network=network, P=P, pores=pores)
         conns = np.append(conns, conn, axis=0)
         constr = np.append(constr, cstr, axis=0)
+
+    # Determine boundary pores
+    p_bc = DetermineBoundaryPores(P=P, pores=pores, conns=conns)
+    if (p_bc is not None) and p_bc.size > 0:
+        conn = np.full((p_bc.size, 2), fill_value=-1, dtype=int)
+        conn[:, 1] = p_bc
+        conns = np.append(conns, conn, axis=0)
 
     # we may have to look for duplicates, which have to be merged, or at least mark them for now
     # so they can be processed later
 
     return np.nonzero(network), pores, conns
 
+
+# TODOS
+# - determine boundary pores correctly
+# - assign properties to pores and throats
+# - compare with SNOW2 and maximum ball
 
 ldim = (40, 40)
 
@@ -537,18 +766,21 @@ fluid = 255
 
 image = np.full(shape=ldim, fill_value=solid, dtype='uint8')
 
-radius = ldim[0] * 0.1
+# mpim.TwoTouchingPoresInSolid(image=image)
+mpim.TwoThroatsOnePore(image=image)
 
-center = np.array(ldim)
-dimarr = center.copy()
+# radius = ldim[0] * 0.1
+
+# center = np.array(ldim)
+# dimarr = center.copy()
 
 # center[0], center[1], center[2] = dimarr * 0.35
 # center[1] , center[2] = dimarr[1]*0.5, dimarr[2]*0.5
-center[0], center[1] = dimarr * 0.35
-center[1] = dimarr[1]*0.5
-AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
-center[0] = dimarr[0] * 0.65
-AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
+# center[0], center[1] = dimarr * 0.35
+# center[1] = dimarr[1]*0.5
+# AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
+# center[0] = dimarr[0] * 0.65
+# AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
 
 # center[0], center[1] = dimarr * 0.5
 # AddBall(image, center=np.floor(center), radius=ldim[0]*0.3, value=fluid)
@@ -562,8 +794,8 @@ AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
 # center[0], center[1] = dimarr[0] * 0.75, dimarr[1] * 0.75
 # AddBall(image, center=np.floor(center), radius=radius, value=fluid)
 
-p1 = dimarr.copy()
-p2 = dimarr.copy()
+# p1 = dimarr.copy()
+# p2 = dimarr.copy()
 # p1[0], p1[1], p2[0], p2[1] = 0, 1, dimarr[0], dimarr[1]-1
 # AddBox(image, np.floor(p1), np.floor(p2), value=fluid)
 # p1[0], p1[1], p2[0], p2[1] = 0, dimarr[1]*0.2, dimarr[0], dimarr[1]*0.3
@@ -579,11 +811,6 @@ p2 = dimarr.copy()
 # AddBox(image, np.floor(p1), np.floor(p2), value=fluid)
 
 P = ComputePotentialField(image, source=1e-0)
-
-imsol = P.copy()
-imsol = imsol - np.min(imsol)
-imsol = imsol / np.max(imsol) * 255
-plt.imshow(imsol)
 
 network, pores, conns = GetNetworkFeatures(image, P, include_solid=True)
 
