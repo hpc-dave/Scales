@@ -1,5 +1,6 @@
 
 import numpy as np
+import random
 
 
 def AddBox(image, point1, point2, value):
@@ -72,3 +73,46 @@ def TwoTouchingPoresInSolid(image):
     AddBall(image, center=np.floor(bcenter), radius=radius, value=255)
     bcenter[0] = center[0] + radius
     AddBall(image, center=np.floor(bcenter), radius=radius, value=255)
+
+
+def ArrayOfBalls(image, shape, shrink_factor: float = 1, value: float = 0):
+    dim = len(image.shape)
+    if len(shape) < dim:
+        shape = list(shape)
+        for i in range(len(shape), len(image)):
+            shape.append(0)
+        shape = tuple(shape)
+
+    if dim != len(shape):
+        raise Exception('image dimension and array dimension are not compatible')
+
+    num_pores = np.prod(shape)
+
+    cshape = [dim]
+    cshape.extend(shape)
+    coords = np.full(cshape, fill_value=-1)
+    radius = float(image.shape[0])
+    for d in range(dim):
+        dn = float(image.shape[d]) / shape[d]
+        offset = dn * 0.5
+        coord = np.asarray([int(offset+dn*i) for i in range(shape[d])])
+        coord = coord.reshape([shape[n] if n == d else 1 for n in range(dim)])
+        coord = np.tile(coord, reps=[shape[n] if n != d else 1 for n in range(dim)])
+        coords[d, ...] = coord
+        radius = np.min([radius, dn*0.5*shrink_factor])
+
+    coords = np.transpose(coords.reshape((dim, num_pores)))
+    for i in range(num_pores):
+        AddBall(image=image, center=coords[i, :], radius=radius, value=value)
+
+
+def RandomUniformBalls(image, target_porosity: float, radius: float, value=0, seed=None):
+    random.seed(a=seed)
+    shape = image.shape
+    dim = len(image.shape)
+
+    porosity = float(image[image == value].size) / image.size
+    while porosity < target_porosity:
+        coords = [random.randrange(0, image.shape[d]-1) for d in range(dim)]
+        AddBall(image=image, center=coords, radius=radius, value=value)
+        porosity = float(image[image == value].size) / image.size

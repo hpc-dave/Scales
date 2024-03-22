@@ -59,7 +59,7 @@ def PlotNetwork(network, pores=None, constr=None, P=None):
             ax.scatter(X, Y, Z, '$|-|$')
 
 
-def PlotNetworkSpider(pores, conns):
+def PlotNetworkSpider(pores, conns, image):
     ax = plt.figure().add_subplot(projection='3d')
     x = pores[0]
     y = pores[1]
@@ -76,10 +76,20 @@ def PlotNetworkSpider(pores, conns):
         c_x = [x[p0], x[p1]]
         c_y = [y[p0], y[p1]]
         c_z = [z[p0], z[p1]]
+        if len(pores) == 2:
+            I1, I2 = image[c_x[0], c_y[0]], image[c_x[1], c_y[1]]
+        else:
+            I1, I2 = image[c_x[0], c_y[0], c_z[0]], image[c_x[1], c_y[1], c_z[1]]
+        color = 'red' if I1 == 0 else 'blue'
+        if I1 != I2:
+            color = 'green'
+        ax.plot(c_x, c_y, c_z, c=color)
 
-        ax.plot(c_x, c_y, c_z)
-
-    ax.scatter(x, y, z)
+    if len(pores) == 2:
+        color = ['red' if image[x[i], y[i]] == 0 else 'blue' for i in range(x.size)]
+    else:
+        color = ['red' if image[x[i], y[i], z[i]] == 0 else 'blue' for i in range(x.size)]
+    ax.scatter(x, y, z, c=color)
 
 
 def AddBox(image, point1, point2, value):
@@ -242,14 +252,26 @@ def Skeletonize(image, include_solid: bool = True, pad_width=3):
     if include_solid:
         network |= skimage.morphology.skeletonize(np.invert(im_loc), method='lee').astype(bool)
     dim = len(image.shape)
-    if pad_width == 0:
-        return network
-    else:
+    if pad_width > 0:
         if dim == 2:
             network = network[pad_width:-pad_width, pad_width:-pad_width]
         else:
             network = network[pad_width:-pad_width, pad_width:-pad_width, pad_width:-pad_width]
-        return network
+    
+    # thicken it up a bit
+    mask = np.zeros_like(network, dtype='uint8')
+    mask[1:, ...] += network[:-1, ...]
+    mask[:-1, ...] += network[1:, ...]
+    mask[:, 1:, ...] += network[:, :-1, ...]
+    mask[:, :-1, ...] += network[:, 1:, ...]
+    if dim > 2:
+        mask[:, :, 1:] += network[:, :, :-1]
+        mask[:, :, :-1] += network[:, :, 1:]
+    mask_p = (image == 0)
+    mask = mask > 1
+    network[mask_p & mask] = True
+    network[~mask_p & mask] = True
+    return network
 
 
 def FindPoresAndConstrictions(P: np.array, network: np.array, indices: bool = True, include_solid: bool = True):
@@ -300,7 +322,7 @@ def FindPoresAndConstrictions(P: np.array, network: np.array, indices: bool = Tr
         P_manip *= -1
         P_manip[~(mask & network)] = np.min(P_manip)
         constr |= skimage.morphology.local_maxima(P_manip,
-                                                  allow_borders=False,
+                                                  allow_borders=True,
                                                   indices=False)
 
     if indices:
@@ -376,6 +398,68 @@ def FindConnectingPore_BFS(P, A: sparse.csr_array, pores, network_coords, start:
                 seen.add(next_id)
     # if we end up here, no pore was found and this is either a dead end or a boundary
     return -1, is_boundary
+
+
+def AssignLabels_BFS(P, start):
+    r"""
+    Labels all cells of an image to a pore via a breadth-first-search approach
+
+    Parameters
+    ----------
+    P: array_like
+        abs values of the potential field for determining the appropriate phase and exclude network connections due to discretization
+        issues
+    start:
+        start point of the search in terms of coordinates
+
+    Returns
+    -------
+    tuple of coordinate of cell associated with the specified pore
+    """
+    dim = len(P.shape)
+    extent = list(P.shape)
+    start = tuple(start)
+    queue = collections.deque([start])
+    seen = set()
+    seen.add(start)
+    phase_start = P[start] > 0
+    inv = 1.0 if phase_start else -1.0
+    if dim == 2:
+        stencil = 4
+        neighbor_mask = np.asarray([[-1, 0], [1, 0], [0, -1], [0, 1]])
+    else:
+        stencil = 6
+        neighbor_mask = np.asarray([[-1, 0, 0], [1, 0, 0], [0, -1, 0], [0, 1, 0], [0, 0, -1], [0, 0, 1]])
+
+    while queue:
+        cell = queue.popleft()
+        pot_cell = P[cell]
+        # gather all neighbors
+
+        neighbors = neighbor_mask + cell
+        # test for next adjacent cells
+        for i in range(stencil):
+            n = tuple(neighbors[i, :])
+            if np.any([(n[i] == -1) | (n[i] == extent[i]) for i in range(dim)]):
+                continue
+            pot_neigh = P[n]
+            if (inv*pot_neigh < inv*pot_cell) and ((pot_neigh > 0) == phase_start) and (n not in seen):
+                queue.append(n)
+                seen.add(n)
+
+    seen = list(seen)
+    return tuple([seen[n][d] for n in range(len(seen))] for d in range(dim))
+
+
+def AssignPoreLabels(P, pores):
+    num_pores = pores[0].size
+    p_loc = np.transpose(np.asarray(pores))
+    labels = np.full_like(P, fill_value=-1, dtype=int)
+    for i in range(num_pores):
+        coord = p_loc[i, :].tolist()
+        cells = AssignLabels_BFS(P=P, start=coord)
+        labels[cells] = i
+    return labels
 
 
 def EstablishConnections(P: np.array, network: np.array, pores: np.array, constr: np.array):
@@ -544,8 +628,8 @@ def ConnectTwoNetworks(P, pores: tuple, network=None):
     #  - dP/dl > 0  --> slope needs to go up
     # todo: A vicinity criterial may allow significant filtering
     #       do some profiling and check!
-    conn = np.full((A.getnnz(), 2), fill_value=-1, dtype=int)
-    constr = np.full((A.getnnz(), dim), fill_value=-1, dtype=int)
+    conn = np.full((A.nnz, 2), fill_value=-1, dtype=int)
+    constr = np.full((A.nnz, dim), fill_value=-1, dtype=int)
     p_loc = np.transpose(np.asarray(pores))
     for row in range(num_pores):
         for pos in range(A.indptr[row], A.indptr[row + 1]):
@@ -586,7 +670,7 @@ def ConnectTwoNetworks(P, pores: tuple, network=None):
     return conn, constr
 
 
-def RemoveDeadEnds(conns, constr, dead_ends):
+def PurgeConnections(conns, constr, dead_ends):
     r"""
     removes connections and constrictions according to the dead ends
 
@@ -600,7 +684,8 @@ def RemoveDeadEnds(conns, constr, dead_ends):
         (N,1) boolean mask with dead end connections as True
     """
     constr = np.transpose(np.asarray(constr))
-    return conns[~dead_ends, :], constr[~dead_ends, :]
+    valid_pores = conns[:, 1] > -1
+    return conns[~dead_ends & valid_pores, :], constr[~dead_ends & valid_pores, :]
 
 
 def DetermineBoundaryPores(P, pores, conns):
@@ -722,14 +807,17 @@ def GetNetworkFeatures(image: np.array,
     # network = skimage.morphology.skeletonize(image, method='lee').astype(bool)
     # if include_solid:
     #     network |= skimage.morphology.skeletonize(np.invert(image), method='lee').astype(bool)
-    network = Skeletonize(image, include_solid=include_solid, pad_width=0)
+    network = Skeletonize(image, include_solid=include_solid, pad_width=3)
 
     # finding pores and constrictions along the skeleton, depending on the potential field
     pores, constr = FindPoresAndConstrictions(P, network)
 
+    # label each cell by pore
+    labels = AssignPoreLabels(P=P, pores=pores)
+
     # determine, which pores are actually connected
     conns, dead_ends = EstablishConnections(network=network, P=P, pores=pores, constr=constr)
-    conns, constr = RemoveDeadEnds(conns=conns, constr=constr, dead_ends=dead_ends)
+    conns, constr = PurgeConnections(conns=conns, constr=constr, dead_ends=dead_ends)
 
     # see here, if multiple peaks as described by Gostick 2017 are an issue with this method and
     # employ merging algorithm. Should be quite simple with distance map of the pores. Make sure,
@@ -768,54 +856,15 @@ image = np.full(shape=ldim, fill_value=solid, dtype='uint8')
 
 # mpim.TwoTouchingPoresInSolid(image=image)
 # mpim.TwoThroatsOnePore(image=image)
-mpim.FourThroatsOnePore(image=image)
+# mpim.FourThroatsOnePore(image=image)
+mpim.RandomUniformBalls(image=image, target_porosity=0.5, radius=5, value=fluid)
+# mpim.ArrayOfBalls(image=image, shape=(2, 2), value=solid, shrink_factor=0.5)
 
-# radius = ldim[0] * 0.1
-
-# center = np.array(ldim)
-# dimarr = center.copy()
-
-# center[0], center[1], center[2] = dimarr * 0.35
-# center[1] , center[2] = dimarr[1]*0.5, dimarr[2]*0.5
-# center[0], center[1] = dimarr * 0.35
-# center[1] = dimarr[1]*0.5
-# AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
-# center[0] = dimarr[0] * 0.65
-# AddBall(image, center=np.floor(center), radius=ldim[0]*0.15, value=fluid)
-
-# center[0], center[1] = dimarr * 0.5
-# AddBall(image, center=np.floor(center), radius=ldim[0]*0.3, value=fluid)
-
-# center[0], center[1] = dimarr * 0.25
-# AddBall(image, center=np.floor(center), radius=radius, value=fluid)
-# center[0], center[1] = dimarr[0] * 0.75, dimarr[1] * 0.25
-# AddBall(image, center=np.floor(center), radius=radius, value=fluid)
-# center[0], center[1] = dimarr[0] * 0.25, dimarr[1] * 0.75
-# AddBall(image, center=np.floor(center), radius=radius, value=fluid)
-# center[0], center[1] = dimarr[0] * 0.75, dimarr[1] * 0.75
-# AddBall(image, center=np.floor(center), radius=radius, value=fluid)
-
-# p1 = dimarr.copy()
-# p2 = dimarr.copy()
-# p1[0], p1[1], p2[0], p2[1] = 0, 1, dimarr[0], dimarr[1]-1
-# AddBox(image, np.floor(p1), np.floor(p2), value=fluid)
-# p1[0], p1[1], p2[0], p2[1] = 0, dimarr[1]*0.2, dimarr[0], dimarr[1]*0.3
-# AddBox(image, np.floor(p1), np.floor(p2), 255)
-# p1[0], p1[1], p2[0], p2[1] = 0, dimarr[1]*0.7, dimarr[0], dimarr[1]*0.8
-# AddBox(image, np.floor(p1), np.floor(p2), 255)
-# p1[0], p1[1], p2[0], p2[1] = dimarr[0]*0.2, 0, dimarr[0]*0.3, dimarr[1]
-# AddBox(image, np.floor(p1), np.floor(p2), 255)
-# p1[0], p1[1], p2[0], p2[1] = dimarr[0]*0.7, 0, dimarr[0]*0.8, dimarr[1]
-# AddBox(image, np.floor(p1), np.floor(p2), 255)
-
-# p1[0], p1[1], p2[0], p2[1] = 1, 1, dimarr[0]-2, dimarr[1]-2
-# AddBox(image, np.floor(p1), np.floor(p2), value=fluid)
-
-P = ComputePotentialField(image, source=1e-0)
+P = ComputePotentialField(image, source=1e-0, image_edge='NoFlux')
 
 network, pores, conns = GetNetworkFeatures(image, P, include_solid=True)
 
-PlotNetworkSpider(pores=pores, conns=conns)
+PlotNetworkSpider(pores=pores, conns=conns, image=image)
 PlotNetwork(network, pores=pores, P=P)
 
 print('finished')
