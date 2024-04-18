@@ -968,6 +968,29 @@ mpim.TwoTouchingPores(image=image)
 
 topo = GetTopologyPoisson(image, source=1e-0, image_edge='NoFlux')
 
+def ConductWSSegmentation(image, topology, markers, phases):
+    labels = np.zeros_like(image, dtype=int)
+    for phase in phases:
+        filter = image == phase
+        filtered_markers = np.copy(markers)
+        filtered_markers[~filter] = 0
+        filtered_topology = np.copy(topology)
+        filtered_topology[~filter] = 0
+        if np.max(filtered_topology > 0):
+            filtered_topology *= -1
+        filtered_labels = skimage.segmentation.watershed(image=filtered_topology, markers=filtered_markers)
+        labels[filter] = filtered_labels[filter]
+    return labels
+
+topo_abs = -np.abs(topo)
+pores = np.zeros_like(image, dtype=int)
+loc_min = skimage.morphology.local_minima(image=topo_abs, indices=True)
+
+pores[loc_min] = np.arange(len(loc_min[0])) + 1
+labels = ConductWSSegmentation(image=image, topology=topo, markers=pores, phases=[0, 255])
+# labels = skimage.segmentation.watershed(image=topo_abs, markers=pores)
+
+
 network, pores, conns, plabels = GetNetworkFeatures(image, topology=topo, include_solid=True)
 
 PlotNetworkSpider(pores=pores, conns=conns, image=image)
