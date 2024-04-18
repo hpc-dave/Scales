@@ -65,14 +65,14 @@ def FourThroatsOnePore(image):
     AddBox(image, np.floor(p1), np.floor(p2), value=255)
 
 
-def TwoTouchingPoresInSolid(image):
+def TwoTouchingPores(image, value=255):
     center = (np.asarray(image.shape) / 2).astype(int)
     radius = int(np.min(center)*0.3)
     bcenter = center.copy()
     bcenter[0] = center[0] - radius
-    AddBall(image, center=np.floor(bcenter), radius=radius, value=255)
+    AddBall(image, center=np.floor(bcenter), radius=radius, value=value)
     bcenter[0] = center[0] + radius
-    AddBall(image, center=np.floor(bcenter), radius=radius, value=255)
+    AddBall(image, center=np.floor(bcenter), radius=radius, value=value)
 
 
 def ArrayOfBalls(image, shape, shrink_factor: float = 1, value: float = 0):
