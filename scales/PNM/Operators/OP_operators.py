@@ -187,8 +187,17 @@ def EnforcePrescribed(network, bc, A, x, b, type='Jacobian'):
                     b[row_aff] = x[row_aff] - param['prescribed']
                 else:
                     b[row_aff] = param['prescribed']
-                A[row_aff, :] = 0.
-                A[row_aff, row_aff] = 1.
+                if scipy.sparse.isspmatrix_csr(A):
+                    # optimization for csr matrix (avoid changing the sparsity structure)
+                    # benefits are memory and speedwise
+                    for r in row_aff:
+                        ptr = (A.indptr[r], A.indptr[r+1])
+                        A.data[ptr[0]:ptr[1]] = 0.
+                        pos = np.where(A.indices[ptr[0]: ptr[1]] == r)[0]
+                        A.data[ptr[0] + pos[0]] = 1.
+                else:
+                    A[row_aff, :] = 0.
+                    A[row_aff, row_aff] = 1.
 
     A.eliminate_zeros()
     return A, b
