@@ -42,10 +42,12 @@ def construct_grad(network: any, num_components=1, include=None):
         rows = np.zeros((im.data.size, num_included), dtype=float)
         cols = np.zeros((im.data.size, num_included), dtype=float)
 
+        pos = 0
         for n in include:
-            rows[:, n] = im.row * num_components + n
-            cols[:, n] = im.col * num_components + n
-            data[:, n] = im.data
+            rows[:, pos] = im.row * num_components + n
+            cols[:, pos] = im.col * num_components + n
+            data[:, pos] = im.data
+            pos += 1
 
         rows = np.ndarray.flatten(rows)
         cols = np.ndarray.flatten(cols)
@@ -75,8 +77,7 @@ def construct_div(network: any, weights=None, custom_weights:bool = False, num_c
         if _weights.shape[0] < network.Nt*num_components*2:
             _weights = np.append(-_weights, _weights)
     else:
-        if weights is None:
-            _weights = np.ones(shape=(network.Nt)) if weights is None else np.copy(weights)
+        _weights = np.ones(shape=(network.Nt)) if weights is None else np.ndarray.flatten(weights)
         if _weights.shape[0] == network.Nt:
             _weights = np.append(-_weights, _weights)
 
@@ -108,14 +109,28 @@ def construct_div(network: any, weights=None, custom_weights:bool = False, num_c
     def div(*args):
         fluxes = args[-1]
         for i in range(len(args)-1):
-            fluxes = fluxes.multiply(args[i])
+            if isinstance(args[i], list) and len(args[i]) == num_components:
+                fluxes.multiply(np.tile(np.asarray(args[i]), network.Nt))
+            else:
+                fluxes = fluxes.multiply(args[i])
         return div_mat * fluxes
 
     return div
 
 
-def construct_ddt(network, dt: float):
-    return scipy.sparse.spdiags(data=[network['pore.volume']/dt], diags=[0])
+def construct_ddt(network, dt: float, num_components:int = 1, weight='pore.volume'):
+    if dt <= 0.:
+        raise(f'timestep is invalid, following constraints were violated: {dt} !> 0')
+    if num_components < 1:
+        raise(f'number of components has to be positive, following value was provided: {num_components}')
+
+    Nc = num_components
+    dVdt = network[weight]/dt
+    dVdt = dVdt.reshape((dVdt.shape[0], 1))
+    if Nc > 1:
+        dVdt = np.tile(A=dVdt, reps=Nc)
+    ddt = scipy.sparse.spdiags(data=[dVdt.ravel()], diags=[0])
+    return ddt
 
 
 def ApplyBC(network, bc, A, rhs=None):
@@ -137,7 +152,6 @@ def ApplyBC(network, bc, A, rhs=None):
         bc_pores = network.pores(label)
         row_aff = bc_pores * num_components
         if 'prescribed' in param:
-            print('prescribed bc')
             rhs[row_aff] = param['prescribed']
             A[row_aff, :] = 0.
             A[row_aff, row_aff] = 1.
@@ -148,3 +162,33 @@ def ApplyBC(network, bc, A, rhs=None):
 
     A.eliminate_zeros()
     return A, rhs
+
+
+def EnforcePrescribed(network, bc, A, x, b, type='Jacobian'):
+    num_pores = network.Np
+    num_rows = A.shape[0]
+    num_components = int(num_rows/num_pores)
+    if (num_rows % num_pores) != 0:
+        raise(f'the number of matrix rows now not consistent with the number of pores, mod returned {num_rows % num_pores}')
+    if num_rows != b.shape[0]:
+        raise('Dimension of rhs and matrix inconsistent!')
+
+    if isinstance(bc, dict) and isinstance(list(bc.keys())[0], int):
+        bc = list(bc)
+    elif not isinstance(bc, list):
+        bc = [bc]
+
+    for n_c, boundary in enumerate(bc):
+        for label, param in boundary.items():
+            bc_pores = network.pores(label)
+            row_aff = bc_pores * num_components + n_c
+            if 'prescribed' in param:
+                if type == 'Jacobian':
+                    b[row_aff] = x[row_aff] - param['prescribed']
+                else:
+                    b[row_aff] = param['prescribed']
+                A[row_aff, :] = 0.
+                A[row_aff, row_aff] = 1.
+
+    A.eliminate_zeros()
+    return A, b
