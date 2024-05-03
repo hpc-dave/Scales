@@ -1,9 +1,5 @@
 import numpy as np
 import scipy
-from scipy.sparse import csc_array, diags, linalg, block_diag
-from scipy.linalg import norm
-from scipy.optimize import OptimizeResult
-import math
 
 import scipy.sparse
 
@@ -57,7 +53,7 @@ def construct_grad(network: any, num_components=1, include=None):
         return scipy.sparse.csr_matrix(grad)
 
 
-def construct_div(network: any, weights=None, custom_weights:bool = False, num_components:int = 1):
+def construct_div(network: any, weights=None, custom_weights: bool = False, num_components: int = 1):
     """
     Constructs divergence matrix
 
@@ -72,7 +68,7 @@ def construct_div(network: any, weights=None, custom_weights:bool = False, num_c
     _weights = None
     if custom_weights:
         if weights is None:
-            raise('custom weights were specified, but none were provided')
+            raise ('custom weights were specified, but none were provided')
         _weights = np.flatten(weights)
         if _weights.shape[0] < network.Nt*num_components*2:
             _weights = np.append(-_weights, _weights)
@@ -94,7 +90,7 @@ def construct_div(network: any, weights=None, custom_weights:bool = False, num_c
             cols[:, n] = div_mat.col * num_components + n
             if custom_weights:
                 beg, end = n * network.Nt * 2, (n + 1) * network.Nt * 2 - 1
-                data[:, n] = _weights[beg : end]
+                data[:, n] = _weights[beg: end]
             else:
                 data[:, n] = _weights
         rows = np.ndarray.flatten(rows)
@@ -120,7 +116,7 @@ def construct_div(network: any, weights=None, custom_weights:bool = False, num_c
     return div
 
 
-def construct_upwind(network, fluxes, num_components:int = 1, include=None):
+def construct_upwind(network, fluxes, num_components: int = 1, include=None):
 
     if num_components == 1:
         weights = np.append(-(fluxes < 0).astype(float), fluxes > 0)
@@ -142,7 +138,7 @@ def construct_upwind(network, fluxes, num_components:int = 1, include=None):
             cols[:, pos] = im.col * num_components + n
             data[:, pos] = im.data
             pos += 1
-        
+
         if isinstance(fluxes, float) or isinstance(fluxes, int):
             _fluxes = np.zeros((network.Nt)) + fluxes
             weights = np.append(_fluxes < 0, _fluxes > 0)
@@ -171,7 +167,7 @@ def construct_upwind(network, fluxes, num_components:int = 1, include=None):
                 data[:, pos] = weights.reshape((network.Nt*2))
                 pos += 1
         else:
-            raise('fluxes have incompatible dimension')
+            raise ('fluxes have incompatible dimension')
 
         rows = np.ndarray.flatten(rows)
         cols = np.ndarray.flatten(cols)
@@ -181,11 +177,11 @@ def construct_upwind(network, fluxes, num_components:int = 1, include=None):
         return scipy.sparse.csr_matrix(upwind)
 
 
-def construct_ddt(network, dt: float, num_components:int = 1, weight='pore.volume'):
+def construct_ddt(network, dt: float, num_components: int = 1, weight='pore.volume'):
     if dt <= 0.:
-        raise(f'timestep is invalid, following constraints were violated: {dt} !> 0')
+        raise (f'timestep is invalid, following constraints were violated: {dt} !> 0')
     if num_components < 1:
-        raise(f'number of components has to be positive, following value was provided: {num_components}')
+        raise (f'number of components has to be positive, following value was provided: {num_components}')
 
     Nc = num_components
     dVdt = network[weight]/dt
@@ -203,13 +199,14 @@ def ApplyBC(network, bc, A, rhs=None):
         rhs = np.zeros((num_pores, 1), dtype=float)
 
     if (num_rows % num_pores) != 0:
-        raise(f'the number of matrix rows now not consistent with the number of pores, mod returned {num_rows % num_pores}')
+        raise (f'the number of matrix rows now not consistent with the number of pores,\
+               mod returned {num_rows % num_pores}')
     if num_rows != rhs.shape[0]:
-        raise('Dimension of rhs and matrix inconsistent!')
+        raise ('Dimension of rhs and matrix inconsistent!')
 
     num_components = int(num_rows / num_pores)
     if num_components > 1:
-        raise('Error, cannot deal with more than one component at the moment!')
+        raise ('Error, cannot deal with more than one component at the moment!')
 
     for label, param in bc.items():
         bc_pores = network.pores(label)
@@ -221,7 +218,7 @@ def ApplyBC(network, bc, A, rhs=None):
         elif 'rate' in param:
             rhs[row_aff] = -param['rate']
         else:
-            a, b, d, dn = param['a'], param['b'], param['d'], param['dn']
+            raise (f'Provided boundary condition cannot be applied for {label}')
 
     A.eliminate_zeros()
     return A, rhs
@@ -232,9 +229,10 @@ def EnforcePrescribed(network, bc, A, x, b, type='Jacobian'):
     num_rows = A.shape[0]
     num_components = int(num_rows/num_pores)
     if (num_rows % num_pores) != 0:
-        raise(f'the number of matrix rows now not consistent with the number of pores, mod returned {num_rows % num_pores}')
+        raise (f'the number of matrix rows now not consistent with the number of pores,\
+               mod returned {num_rows % num_pores}')
     if num_rows != b.shape[0]:
-        raise('Dimension of rhs and matrix inconsistent!')
+        raise ('Dimension of rhs and matrix inconsistent!')
 
     if isinstance(bc, dict) and isinstance(list(bc.keys())[0], int):
         bc = list(bc)
