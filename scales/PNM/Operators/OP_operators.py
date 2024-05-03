@@ -111,11 +111,74 @@ def construct_div(network: any, weights=None, custom_weights:bool = False, num_c
         for i in range(len(args)-1):
             if isinstance(args[i], list) and len(args[i]) == num_components:
                 fluxes.multiply(np.tile(np.asarray(args[i]), network.Nt))
+            elif isinstance(args[i], np.ndarray):
+                fluxes = fluxes.multiply(args[i].reshape(args[i].size, 1))
             else:
                 fluxes = fluxes.multiply(args[i])
         return div_mat * fluxes
 
     return div
+
+
+def construct_upwind(network, fluxes, num_components:int = 1, include=None):
+
+    if num_components == 1:
+        weights = np.append(-(fluxes < 0).astype(float), fluxes > 0)
+        return np.transpose(network.create_incidence_matrix(weights=weights, fmt='csr'))
+    else:
+        if include is None:
+            include = range(num_components)
+        num_included = len(include)
+
+        im = np.transpose(network.create_incidence_matrix(fmt='coo'))
+
+        data = np.zeros((im.data.size, num_included), dtype=float)
+        rows = np.zeros((im.data.size, num_included), dtype=int)
+        cols = np.zeros((im.data.size, num_included), dtype=int)
+
+        pos = 0
+        for n in include:
+            rows[:, pos] = im.row * num_components + n
+            cols[:, pos] = im.col * num_components + n
+            data[:, pos] = im.data
+            pos += 1
+        
+        if isinstance(fluxes, float) or isinstance(fluxes, int):
+            _fluxes = np.zeros((network.Nt)) + fluxes
+            weights = np.append(_fluxes < 0, _fluxes > 0)
+            data *= fluxes
+            pos = 0
+            for n in include:
+                data[:, pos] *= fluxes[n]
+                pos += 1
+        elif fluxes.size == num_components:
+            pos = 0
+            for n in include:
+                data[:, pos] *= fluxes[n]
+                pos += 1
+        elif fluxes.size == network.Nt:
+            weights = np.append(fluxes < 0, fluxes > 0)
+            pos = 0
+            for n in include:
+                data[:, pos] = weights.reshape((network.Nt*2))
+                pos += 1
+        elif (len(fluxes.shape)) == 2\
+            and (fluxes.shape[0] == network.Nt)\
+                and (fluxes.shape[1] == num_components):
+            pos = 0
+            for n in include:
+                weights = np.append(fluxes[:, n] < 0, fluxes[:, n] > 0)
+                data[:, pos] = weights.reshape((network.Nt*2))
+                pos += 1
+        else:
+            raise('fluxes have incompatible dimension')
+
+        rows = np.ndarray.flatten(rows)
+        cols = np.ndarray.flatten(cols)
+        data = np.ndarray.flatten(data)
+        mat_shape = (network.Nt * num_components, network.Np * num_components)
+        upwind = scipy.sparse.coo_matrix((data, (rows, cols)), shape=mat_shape)
+        return scipy.sparse.csr_matrix(upwind)
 
 
 def construct_ddt(network, dt: float, num_components:int = 1, weight='pore.volume'):
