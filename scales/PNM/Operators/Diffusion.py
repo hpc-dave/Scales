@@ -5,7 +5,7 @@ import spheres_and_cylinders as geo_model
 import numpy as np
 import scipy
 import math
-from OP_operators import construct_grad, construct_div, construct_ddt, EnforcePrescribed
+from OP_operators import construct_grad, construct_div, construct_ddt, ApplyBC
 
 Nx = 100
 Ny = 1
@@ -67,19 +67,19 @@ zeta = zeta - zeta[0]
 zeta = zeta / (zeta[-1]+0.5*spacing)
 ana_sol = np.zeros_like(c)
 
-J = EnforcePrescribed(network=network, bc=bc, A=J, type='Jacobian')
+J = ApplyBC(network=network, bc=bc, A=J, type='Jacobian')
 for t in tsteps:
     x_old = x.copy()
     pos += 1
 
     G = J * x - ddt * x_old
-    G = EnforcePrescribed(network=network, bc=bc, x=x, b=G, type='Defect')
+    G = ApplyBC(network=network, bc=bc, x=x, b=G, type='Defect')
     for i in range(max_iter):
         last_iter = i
         dx[:] = scipy.sparse.linalg.spsolve(J, -G).reshape(dx.shape)
         x = x + dx
         G = J * x - ddt * x_old
-        G = EnforcePrescribed(network=network, bc=bc, x=x, b=G, type='Defect')
+        G = ApplyBC(network=network, bc=bc, x=x, b=G, type='Defect')
         G_norm = np.linalg.norm(np.abs(G), ord=2)
         if G_norm < tol:
             break

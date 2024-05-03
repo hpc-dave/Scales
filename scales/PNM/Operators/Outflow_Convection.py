@@ -46,7 +46,7 @@ time = dt
 
 # need to provide div with some weights, namely an area
 # that the flux act on
-A_flux = np.full((network.Nt, 1), fill_value= network['pore.volume'][0]/spacing, dtype=float)
+A_flux = np.full((network.Nt, 1), fill_value=network['pore.volume'][0]/spacing, dtype=float)
 
 fluxes = np.zeros((network.Nt, 2), dtype=float)
 fluxes[:, 0] = v[0]

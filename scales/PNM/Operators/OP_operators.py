@@ -236,13 +236,42 @@ def construct_upwind(network, fluxes, num_components: int = 1, include=None):
 
 
 def construct_ddt(network, dt: float, num_components: int = 1, weight='pore.volume'):
+    r"""
+    Computes the discretized matrix for the partial time derivative
+
+    Parameters
+    ----------
+    network:
+        OpenPNM network
+    dt: float
+        discretized timestep
+    num_components: int
+        number of coupled components components
+    weight:
+        Weight to used for discretization, by default the pore volume is used
+
+    Returns
+    -------
+    [Np, Np] sparse CSR matrix with transient terms
+
+    Notes
+    -----
+    By default, a finite volume discretization is assumed, therefore the standard form of
+    the partial derivative is given by
+
+    \iiint \frac{\partial}{\partial t} \mathrm{d}V \approx \frac{\Delta V}{\Delta t}
+
+    Note that here the integrated variable is ommitted in the description, as it will be provided
+    either by the solution vector for implicit treatment and by the field for explicit components
+    """
     if dt <= 0.:
         raise (f'timestep is invalid, following constraints were violated: {dt} !> 0')
     if num_components < 1:
         raise (f'number of components has to be positive, following value was provided: {num_components}')
 
     Nc = num_components
-    dVdt = network[weight]/dt
+    dVdt = network[weight] if isinstance(weight, str) else weight
+    dVdt /= dt
     dVdt = dVdt.reshape((dVdt.shape[0], 1))
     if Nc > 1:
         dVdt = np.tile(A=dVdt, reps=Nc)
@@ -251,6 +280,36 @@ def construct_ddt(network, dt: float, num_components: int = 1, weight='pore.volu
 
 
 def _apply_prescribed_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type: str):
+    r"""
+    Enforces prescribed boundary conditions to the provided matrix and/or rhs vector
+
+    Parameters
+    ----------
+    pore_labels: array_like
+        pore ids of the affected pores
+    bc: dict
+        the values associated with the boundary condition, currently supported keywords
+        are 'value' and 'prescribed'
+    num_components: int
+        number of implicitly coupled components in the linear equation system
+    n_c: int
+        affected component
+    A: matrix
+        matrix which may be manipulated
+    x: numpy.ndarray
+        solution vector
+    b: numpy.ndarray
+        rhs vector
+    type: str
+        type of algorithm/affected part of the LES, special treatments are required
+        if the defect for Newton-Raphson iterations is computed
+
+    Notes
+    -----
+
+    This function does have a specialization for CSR matrices, which is recommended for
+    fast matrix-matrix and matrix-vector operations.
+    """
     row_aff = pore_labels * num_components + n_c
     value = bc['prescribed'] if 'prescribed' in bc else bc['value']
     if b is not None:
@@ -275,7 +334,36 @@ def _apply_prescribed_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b
 
 
 def _apply_rate_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type: str):
-    if b is None and type == 'Jacobian':
+    r"""
+    Enforces rate boundary conditions to the provided matrix and/or rhs vector
+
+    Parameters
+    ----------
+    pore_labels: array_like
+        pore ids of the affected pores
+    bc: dict
+        the values associated with the boundary condition, currently supported keywords
+        are 'value' and 'prescribed'
+    num_components: int
+        number of implicitly coupled components in the linear equation system
+    n_c: int
+        affected component
+    A: matrix
+        matrix which may be manipulated
+    x: numpy.ndarray
+        solution vector
+    b: numpy.ndarray
+        rhs vector
+    type: str
+        type of algorithm/affected part of the LES, special treatments are required
+        if the defect for Newton-Raphson iterations is computed
+
+    Notes
+    -----
+    A rate is directly applied as explicit source term to pore and therefore ends
+    up on the RHS of the LES.
+    """
+    if b is None:
         return A, b
 
     row_aff = pore_labels * num_components + n_c
@@ -285,21 +373,48 @@ def _apply_rate_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type
     else:
         values = value
 
-    if b is not None and (type == 'Jacobian' or type == 'Defect'):
-        b[row_aff] -= values
-    else:
-        raise ('not implemented')
+    b[row_aff] -= values
 
     return A, b
 
 
 def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type: str):
-    # raise ('not implemented')
-    row_aff = pore_labels * num_components + n_c
+    r"""
+    Enforces an outflow boundary conditions to the provided matrix and/or rhs vector
 
-    if A is None and (type == 'Jacobian' or type == 'Defect'):
-        b[row_aff] = 0.
-        return A, b
+    Parameters
+    ----------
+    pore_labels: array_like
+        pore ids of the affected pores
+    bc: dict
+        the values associated with the boundary condition, currently supported keywords
+        are 'value' and 'prescribed'
+    num_components: int
+        number of implicitly coupled components in the linear equation system
+    n_c: int
+        affected component
+    A: matrix
+        matrix which may be manipulated
+    x: numpy.ndarray
+        solution vector
+    b: numpy.ndarray
+        rhs vector
+    type: str
+        type of algorithm/affected part of the LES, special treatments are required
+        if the defect for Newton-Raphson iterations is computed
+
+    Notes
+    -----
+    An outflow pore is not integrated and not divergence free. The value in the affected
+    pore is averaged from the connected pores, weighted by the respective fluxes.
+    For convective contributions, the fluxes are independent of the outflow pore. In contrast,
+    diffusive contributions require this averaged value to work properly.
+    It is left to the user to make sure, that this is ALWAYS an outflow boundary, in the case
+    of reverse flow the behavior is undefinend.
+    This function does have a specialization for CSR matrices, which is recommended for
+    fast matrix-matrix and matrix-vector operations.
+    """
+    row_aff = pore_labels * num_components + n_c
 
     if A is not None:
         if scipy.sparse.isspmatrix_csr(A):
@@ -375,54 +490,6 @@ def ApplyBC(network, bc, A=None, x=None, b=None, type='Jacobian'):
                                          type=type)
             else:
                 raise (f'unknown bc type: {param.keys()}')
-
-    if A is not None:
-        A.eliminate_zeros()
-
-    if A is not None and b is not None:
-        return A, b
-    elif A is not None:
-        return A
-    else:
-        return b
-
-
-def EnforcePrescribed(network, bc, A=None, x=None, b=None, type='Jacobian'):
-    if len(bc) == 0:
-        print(f'{GetLineInfo()}: No boundary conditions were provided, consider removing function altogether!')
-
-    if A is None and b is None:
-        raise ('Neither matrix nor rhs were provided')
-    if type == 'Jacobian' and A is None:
-        raise (f'No matrix was provided although {type} was provided as type')
-    if type == 'Jacobian' and b is not None and x is None:
-        raise (f'No initial values were provided although {type} was specified and rhs is not None')
-    if type == 'Defect' and b is None:
-        raise (f'No rhs was provided although {type} was provided as type')
-
-    num_pores = network.Np
-    num_rows = A.shape[0] if A is not None else b.shape[0]
-    num_components = int(num_rows/num_pores)
-    if (num_rows % num_pores) != 0:
-        raise (f'the number of matrix rows now not consistent with the number of pores,\
-               mod returned {num_rows % num_pores}')
-    if b is not None and num_rows != b.shape[0]:
-        raise ('Dimension of rhs and matrix inconsistent!')
-
-    if isinstance(bc, dict) and isinstance(list(bc.keys())[0], int):
-        bc = list(bc)
-    elif not isinstance(bc, list):
-        bc = [bc]
-
-    for n_c, boundary in enumerate(bc):
-        for label, param in boundary.items():
-            bc_pores = network.pores(label)
-            if 'prescribed' in param or 'value' in param:
-                A, b = _apply_prescribed_bc(pore_labels=bc_pores,
-                                            bc=param,
-                                            num_components=num_components, n_c=n_c,
-                                            A=A, x=x, b=b,
-                                            type=type)
 
     if A is not None:
         A.eliminate_zeros()
