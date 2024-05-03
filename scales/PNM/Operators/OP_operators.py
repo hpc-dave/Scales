@@ -11,7 +11,7 @@ def GetLineInfo():
     return f"{inspect.stack()[1][1]}: l.{inspect.stack()[1][2]} in {inspect.stack()[1][3]}"
 
 
-def construct_grad(network: any, num_components=1, include=None):
+def _construct_grad(self, network, num_components=1, include=None):
     """
     Constructs the gradient matrix
 
@@ -60,7 +60,7 @@ def construct_grad(network: any, num_components=1, include=None):
         return scipy.sparse.csr_matrix(grad)
 
 
-def construct_div(network: any, weights=None, custom_weights: bool = False, num_components: int = 1):
+def _construct_div(network: any, weights=None, custom_weights: bool = False, num_components: int = 1):
     """
     Constructs divergence matrix
 
@@ -123,7 +123,7 @@ def construct_div(network: any, weights=None, custom_weights: bool = False, num_
     return div
 
 
-def construct_upwind(network, fluxes, num_components: int = 1, include=None):
+def _construct_upwind(network, fluxes, num_components: int = 1, include=None):
     r"""
     Constructs a [Nt, Np] matrix representing a directed network based on the upwind
     fluxes
@@ -235,7 +235,7 @@ def construct_upwind(network, fluxes, num_components: int = 1, include=None):
         return scipy.sparse.csr_matrix(upwind)
 
 
-def construct_ddt(network, dt: float, num_components: int = 1, weight='pore.volume'):
+def _construct_ddt(network, dt: float, num_components: int = 1, weight='pore.volume'):
     r"""
     Computes the discretized matrix for the partial time derivative
 
@@ -500,3 +500,27 @@ def ApplyBC(network, bc, A=None, x=None, b=None, type='Jacobian'):
         return A
     else:
         return b
+
+
+class MulticomponentTools:
+    def __init__(self, network, num_components: int = 1, bc=None):
+        self.network = network
+        self.bc = bc
+        self.num_components = num_components
+
+    def gradient(self, include=None):
+        return _construct_grad(self.network, self.num_components, include)
+
+    def divergence(self, weights=None, custom_weights: bool = False):
+        return _construct_div(self.network, weights=weights, custom_weights=custom_weights,
+                              num_components=self.num_components)
+
+    def upwind(self, fluxes, include=None):
+        return _construct_upwind(self.network, fluxes=fluxes, num_components=self.num_components,
+                                 include=include)
+
+    def ddt(self, dt: float, weight='pore.volume'):
+        return _construct_ddt(self.network, dt=dt, num_components=self.num_components, weight=weight)
+
+    def ApplyBC(self, A=None, x=None, b=None, type='Jacobian'):
+        return ApplyBC(self.network, bc=self.bc, A=A, x=x, b=b, type=type)
