@@ -270,7 +270,7 @@ def _construct_ddt(network, dt: float, num_components: int = 1, weight='pore.vol
         raise (f'number of components has to be positive, following value was provided: {num_components}')
 
     Nc = num_components
-    dVdt = network[weight] if isinstance(weight, str) else weight
+    dVdt = network[weight].copy() if isinstance(weight, str) else weight
     dVdt /= dt
     dVdt = dVdt.reshape((dVdt.shape[0], 1))
     if Nc > 1:

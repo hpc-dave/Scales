@@ -4,7 +4,7 @@ import scipy.sparse
 import spheres_and_cylinders as geo_model
 import numpy as np
 import scipy
-from OP_operators import _construct_upwind, _construct_div, _construct_ddt, ApplyBC
+from OP_operators import MulticomponentTools
 
 Nx = 100
 Ny = 1
@@ -29,6 +29,8 @@ bc_0['left'] = {'rate': rate_in}
 bc_1['right'] = {'rate': rate_in}
 bc = [bc_0, bc_1]
 
+mt = MulticomponentTools(network=network, num_components=Nc, bc=bc)
+
 x = np.ndarray.flatten(c).reshape((c.size, 1))
 dx = np.zeros_like(x)
 
@@ -50,12 +52,12 @@ fluxes = np.zeros((network.Nt, 2), dtype=float)
 fluxes[:, 0] = v[0]
 fluxes[:, 1] = v[1]
 
-c_up = _construct_upwind(network=network, fluxes=fluxes, num_components=Nc)
-div = _construct_div(network=network, weights=A_flux, num_components=Nc)
-ddt = _construct_ddt(network=network, dt=dt, num_components=Nc)
+c_up = mt.upwind(fluxes=fluxes)
+div = mt.divergence(weights=A_flux)
+ddt = mt.ddt(dt=dt)
 
 J = ddt + div(fluxes, c_up)
-J = ApplyBC(network=network, bc=bc, A=J, x=x)
+J = mt.ApplyBC(A=J, x=x)
 
 mass_init = np.sum(c * network['pore.volume'].reshape(network.Np, 1), axis=0)
 
@@ -64,13 +66,13 @@ for t in tsteps:
     pos += 1
 
     G = J * x - ddt * x_old
-    G = ApplyBC(network=network, bc=bc, b=G, x=x, type='Defect')
+    G = mt.ApplyBC(b=G, x=x, type='Defect')
     for i in range(max_iter):
         last_iter = i
         dx[:] = scipy.sparse.linalg.spsolve(J, -G).reshape(dx.shape)
         x = x + dx
         G = J * x - ddt * x_old
-        G = ApplyBC(network=network, bc=bc, b=G, x=x, type='Defect')
+        G = mt.ApplyBC(b=G, x=x, type='Defect')
         G_norm = np.linalg.norm(np.abs(G), ord=2)
         if G_norm < tol:
             break
