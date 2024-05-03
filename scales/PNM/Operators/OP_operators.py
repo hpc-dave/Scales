@@ -294,7 +294,34 @@ def _apply_rate_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type
 
 
 def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type: str):
-    raise ('not implemented')
+    # raise ('not implemented')
+    row_aff = pore_labels * num_components + n_c
+
+    if A is None and (type == 'Jacobian' or type == 'Defect'):
+        b[row_aff] = 0.
+        return A, b
+
+    if A is not None:
+        if scipy.sparse.isspmatrix_csr(A):
+            # optimization for csr matrix (avoid changing the sparsity structure)
+            # note that we expect here that the center value is allocated!
+            # benefits are memory and speedwise (tested with 100000 affected rows)
+            for r in row_aff:
+                ptr = (A.indptr[r], A.indptr[r+1])
+                ind = A.indices[ptr[0]: ptr[1]]
+                mask = ind == r
+                pos_nb = np.where(~mask)[0] + ptr[0]
+                pos_c = np.where(mask)[0] + ptr[0]
+                coeff = np.sum(A.data[pos_nb])
+                A.data[pos_c] = -coeff
+        else:
+            A = scipy.sparse.lil_matrix(A)
+            coeff = np.sum(A[row_aff, :], axis=1) - A[row_aff, row_aff]
+            A[row_aff, row_aff] = -coeff
+
+    if b is not None:
+        b[row_aff] = 0.
+
     return A, b
 
 
