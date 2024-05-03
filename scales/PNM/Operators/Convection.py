@@ -74,13 +74,11 @@ for t in tsteps:
     pos += 1
 
     G = J * x - ddt * x_old
-    # J, G = EnforcePrescribed(network=network, bc=bc, A=J, x=x, b=G, type='Jacobian')
     for i in range(max_iter):
         last_iter = i
         dx[:] = scipy.sparse.linalg.spsolve(J, -G).reshape(dx.shape)
         x = x + dx
         G = J * x - ddt * x_old
-        # J, G = EnforcePrescribed(network=network, bc=bc, A=J, x=x, b=G, type='Jacobian')
         G_norm = np.linalg.norm(np.abs(G), ord=2)
         if G_norm < tol:
             break

@@ -162,7 +162,14 @@ def construct_upwind(network, fluxes, num_components: int = 1, include=None):
     """
 
     if num_components == 1:
-        weights = np.append(-(fluxes < 0).astype(float), fluxes > 0)
+        # check input
+        if isinstance(fluxes, float) or isinstance(fluxes, int):
+            _fluxes = np.zeros((network.Nt)) + fluxes
+        elif fluxes.size == network.Nt:
+            _fluxes = fluxes
+        else:
+            raise ('invalid flux dimensions')
+        weights = np.append(-(_fluxes < 0).astype(float), _fluxes > 0)
         return np.transpose(network.create_incidence_matrix(weights=weights, fmt='csr'))
     else:
         if include is None:
@@ -243,50 +250,74 @@ def construct_ddt(network, dt: float, num_components: int = 1, weight='pore.volu
     return ddt
 
 
-def ApplyBC(network, bc, A, rhs=None):
-    num_pores = network.Np
-    num_rows = A.shape[0]
-    if rhs is None:
-        rhs = np.zeros((num_pores, 1), dtype=float)
+def _apply_prescribed_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type: str):
+    row_aff = pore_labels * num_components + n_c
+    value = bc['prescribed'] if 'prescribed' in bc else bc['value']
+    if b is not None:
+        if type == 'Jacobian' or type == 'Defect':
+            b[row_aff] = x[row_aff] - value
+        else:
+            b[row_aff] = value
 
-    if (num_rows % num_pores) != 0:
-        raise (f'the number of matrix rows now not consistent with the number of pores,\
-               mod returned {num_rows % num_pores}')
-    if num_rows != rhs.shape[0]:
-        raise ('Dimension of rhs and matrix inconsistent!')
-
-    num_components = int(num_rows / num_pores)
-    if num_components > 1:
-        raise ('Error, cannot deal with more than one component at the moment!')
-
-    for label, param in bc.items():
-        bc_pores = network.pores(label)
-        row_aff = bc_pores * num_components
-        if 'prescribed' in param:
-            rhs[row_aff] = param['prescribed']
+    if (A is not None) and (type != 'Defect'):
+        if scipy.sparse.isspmatrix_csr(A):
+            # optimization for csr matrix (avoid changing the sparsity structure)
+            # benefits are memory and speedwise (tested with 100000 affected rows)
+            for r in row_aff:
+                ptr = (A.indptr[r], A.indptr[r+1])
+                A.data[ptr[0]:ptr[1]] = 0.
+                pos = np.where(A.indices[ptr[0]: ptr[1]] == r)[0]
+                A.data[ptr[0] + pos[0]] = 1.
+        else:
             A[row_aff, :] = 0.
             A[row_aff, row_aff] = 1.
-        elif 'rate' in param:
-            rhs[row_aff] = -param['rate']
-        else:
-            raise (f'Provided boundary condition cannot be applied for {label}')
-
-    A.eliminate_zeros()
-    return A, rhs
+    return A, b
 
 
-def EnforcePrescribed(network, bc, A, x, b, type='Jacobian'):
-    if len(bc) == 0:
-        print(f'{GetLineInfo()}: No boundary conditions were provided, consider removing function altogether!')
+def _apply_rate_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type: str):
+    if b is None and type == 'Jacobian':
         return A, b
 
+    row_aff = pore_labels * num_components + n_c
+    value = bc['rate']
+    if isinstance(value, float) or isinstance(value, int):
+        values = np.full(row_aff.shape, value, dtype=float)
+    else:
+        values = value
+
+    if b is not None and (type == 'Jacobian' or type == 'Defect'):
+        b[row_aff] -= values
+    else:
+        raise ('not implemented')
+
+    return A, b
+
+
+def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type: str):
+    raise ('not implemented')
+    return A, b
+
+
+def ApplyBC(network, bc, A=None, x=None, b=None, type='Jacobian'):
+    if len(bc) == 0:
+        print(f'{GetLineInfo()}: No boundary conditions were provided, consider removing function altogether!')
+
+    if A is None and b is None:
+        raise ('Neither matrix nor rhs were provided')
+    if type == 'Jacobian' and A is None:
+        raise (f'No matrix was provided although {type} was provided as type')
+    if type == 'Jacobian' and b is not None and x is None:
+        raise (f'No initial values were provided although {type} was specified and rhs is not None')
+    if type == 'Defect' and b is None:
+        raise (f'No rhs was provided although {type} was provided as type')
+
     num_pores = network.Np
-    num_rows = A.shape[0]
+    num_rows = A.shape[0] if A is not None else b.shape[0]
     num_components = int(num_rows/num_pores)
     if (num_rows % num_pores) != 0:
         raise (f'the number of matrix rows now not consistent with the number of pores,\
                mod returned {num_rows % num_pores}')
-    if num_rows != b.shape[0]:
+    if b is not None and num_rows != b.shape[0]:
         raise ('Dimension of rhs and matrix inconsistent!')
 
     if isinstance(bc, dict) and isinstance(list(bc.keys())[0], int):
@@ -297,23 +328,81 @@ def EnforcePrescribed(network, bc, A, x, b, type='Jacobian'):
     for n_c, boundary in enumerate(bc):
         for label, param in boundary.items():
             bc_pores = network.pores(label)
-            row_aff = bc_pores * num_components + n_c
-            if 'prescribed' in param:
-                if type == 'Jacobian':
-                    b[row_aff] = x[row_aff] - param['prescribed']
-                else:
-                    b[row_aff] = param['prescribed']
-                if scipy.sparse.isspmatrix_csr(A):
-                    # optimization for csr matrix (avoid changing the sparsity structure)
-                    # benefits are memory and speedwise
-                    for r in row_aff:
-                        ptr = (A.indptr[r], A.indptr[r+1])
-                        A.data[ptr[0]:ptr[1]] = 0.
-                        pos = np.where(A.indices[ptr[0]: ptr[1]] == r)[0]
-                        A.data[ptr[0] + pos[0]] = 1.
-                else:
-                    A[row_aff, :] = 0.
-                    A[row_aff, row_aff] = 1.
+            if 'prescribed' in param or 'value' in param:
+                A, b = _apply_prescribed_bc(pore_labels=bc_pores,
+                                            bc=param,
+                                            num_components=num_components, n_c=n_c,
+                                            A=A, x=x, b=b,
+                                            type=type)
+            elif 'rate' in param:
+                A, b = _apply_rate_bc(pore_labels=bc_pores,
+                                      bc=param,
+                                      num_components=num_components, n_c=n_c,
+                                      A=A, x=x, b=b,
+                                      type=type)
+            elif 'outflow' in param:
+                A, b = _apply_outflow_bc(pore_labels=bc_pores,
+                                         bc=param,
+                                         num_components=num_components, n_c=n_c,
+                                         A=A, x=x, b=b,
+                                         type=type)
+            else:
+                raise (f'unknown bc type: {param.keys()}')
 
-    A.eliminate_zeros()
-    return A, b
+    if A is not None:
+        A.eliminate_zeros()
+
+    if A is not None and b is not None:
+        return A, b
+    elif A is not None:
+        return A
+    else:
+        return b
+
+
+def EnforcePrescribed(network, bc, A=None, x=None, b=None, type='Jacobian'):
+    if len(bc) == 0:
+        print(f'{GetLineInfo()}: No boundary conditions were provided, consider removing function altogether!')
+
+    if A is None and b is None:
+        raise ('Neither matrix nor rhs were provided')
+    if type == 'Jacobian' and A is None:
+        raise (f'No matrix was provided although {type} was provided as type')
+    if type == 'Jacobian' and b is not None and x is None:
+        raise (f'No initial values were provided although {type} was specified and rhs is not None')
+    if type == 'Defect' and b is None:
+        raise (f'No rhs was provided although {type} was provided as type')
+
+    num_pores = network.Np
+    num_rows = A.shape[0] if A is not None else b.shape[0]
+    num_components = int(num_rows/num_pores)
+    if (num_rows % num_pores) != 0:
+        raise (f'the number of matrix rows now not consistent with the number of pores,\
+               mod returned {num_rows % num_pores}')
+    if b is not None and num_rows != b.shape[0]:
+        raise ('Dimension of rhs and matrix inconsistent!')
+
+    if isinstance(bc, dict) and isinstance(list(bc.keys())[0], int):
+        bc = list(bc)
+    elif not isinstance(bc, list):
+        bc = [bc]
+
+    for n_c, boundary in enumerate(bc):
+        for label, param in boundary.items():
+            bc_pores = network.pores(label)
+            if 'prescribed' in param or 'value' in param:
+                A, b = _apply_prescribed_bc(pore_labels=bc_pores,
+                                            bc=param,
+                                            num_components=num_components, n_c=n_c,
+                                            A=A, x=x, b=b,
+                                            type=type)
+
+    if A is not None:
+        A.eliminate_zeros()
+
+    if A is not None and b is not None:
+        return A, b
+    elif A is not None:
+        return A
+    else:
+        return b
