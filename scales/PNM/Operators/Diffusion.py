@@ -2,7 +2,6 @@ import openpnm as op
 import scipy.linalg
 import scipy.sparse
 import spheres_and_cylinders as geo_model
-from matplotlib import pyplot as plt
 import numpy as np
 import scipy
 import math
@@ -65,7 +64,6 @@ zeta = np.asarray([network['pore.coords'][i][0] for i in range(network.Np)])
 zeta = zeta - zeta[0]
 zeta = zeta / (zeta[-1]+0.5*spacing)
 
-# fig, ax = plt.subplots()
 for t in tsteps:
     x_old = x.copy()
     pos += 1
@@ -87,8 +85,6 @@ for t in tsteps:
     ana_sol = AnalyticalSolution(time, 1-zeta)
     err = ana_sol - x
     print(f'{t}/{len(tsteps)} - {time}: {last_iter + 1} it [{G_norm}] err [{np.max(np.abs(err))}]')
-    # fig.clear()
-    # plt.plot(zeta, x, '-', zeta, ana_sol, '.')
     sol[:, pos] = x.ravel()
     time += dt
 

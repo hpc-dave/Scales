@@ -1,7 +1,14 @@
 import numpy as np
 import scipy
-
 import scipy.sparse
+import inspect
+
+
+def GetLineInfo():
+    r"""
+    Provides information of calling point in the form: <path/to/file>: l. <line number> in <function name>
+    """
+    return f"{inspect.stack()[1][1]}: l.{inspect.stack()[1][2]} in {inspect.stack()[1][3]}"
 
 
 def construct_grad(network: any, num_components=1, include=None):
@@ -117,6 +124,42 @@ def construct_div(network: any, weights=None, custom_weights: bool = False, num_
 
 
 def construct_upwind(network, fluxes, num_components: int = 1, include=None):
+    r"""
+    Constructs a [Nt, Np] matrix representing a directed network based on the upwind
+    fluxes
+
+    Parameters
+    ----------
+    network : any
+        OpenPNM network instance
+    fluxes : any
+        fluxes which determine the upwind direction, see below for more details
+    num_components : int
+        number of components the matrix is constructed for
+    include : list
+        a list of integers to specify for which components the matrix should be constructed,
+        for components which are not listed here, the rows will be 0. If 'None' is provided,
+        all components will be selected
+
+    Returns
+    -------
+    A [Nt, Np] sized CSR-matrix representing a directed network
+
+    Notes
+    -----
+    The direction of the fluxes is directly linked with the storage of the connections
+    inside the OpenPNM network. For more details, refer to the 'create_incidence_matrix' method
+    of the network module.
+    The resulting matrix IS NOT SCALED with the fluxes and can also be used for determining
+    upwind interpolated values.
+    The provided fluxes can either be:
+        int/float - single value
+        list/numpy.ndarray - with size num_components applies the values to each component separately
+        numpy.ndarray - with size Nt applies the fluxes to each component by throat: great for convection
+        numpy.ndarray - with size Nt * num_components is the most specific application for complex
+                        multicomponent coupling, where fluxes can be opposed to each other within
+                        the same throat
+    """
 
     if num_components == 1:
         weights = np.append(-(fluxes < 0).astype(float), fluxes > 0)
@@ -140,19 +183,26 @@ def construct_upwind(network, fluxes, num_components: int = 1, include=None):
             pos += 1
 
         if isinstance(fluxes, float) or isinstance(fluxes, int):
+            # single provided value
             _fluxes = np.zeros((network.Nt)) + fluxes
             weights = np.append(_fluxes < 0, _fluxes > 0)
-            data *= fluxes
             pos = 0
             for n in include:
-                data[:, pos] *= fluxes[n]
+                data[:, pos] = weights
                 pos += 1
-        elif fluxes.size == num_components:
+        elif (isinstance(fluxes, list) and len(fluxes) == num_components)\
+                or (isinstance(fluxes, np.ndarray) and fluxes.size == num_components):
+            # a list of values for each component
+            _fluxes = np.zeros((network.Nt))
             pos = 0
             for n in include:
-                data[:, pos] *= fluxes[n]
+                _fluxes[:] = fluxes[n]
+                weights = np.append(_fluxes < 0, _fluxes > 0)
+                data[:, pos] = weights
                 pos += 1
         elif fluxes.size == network.Nt:
+            # fluxes for each throat, e.g. for single component or same convective fluxes
+            # for each component
             weights = np.append(fluxes < 0, fluxes > 0)
             pos = 0
             for n in include:
@@ -161,6 +211,7 @@ def construct_upwind(network, fluxes, num_components: int = 1, include=None):
         elif (len(fluxes.shape)) == 2\
             and (fluxes.shape[0] == network.Nt)\
                 and (fluxes.shape[1] == num_components):
+            # each throat has different fluxes for each component
             pos = 0
             for n in include:
                 weights = np.append(fluxes[:, n] < 0, fluxes[:, n] > 0)
@@ -225,6 +276,10 @@ def ApplyBC(network, bc, A, rhs=None):
 
 
 def EnforcePrescribed(network, bc, A, x, b, type='Jacobian'):
+    if len(bc) == 0:
+        print(f'{GetLineInfo()}: No boundary conditions were provided, consider removing function altogether!')
+        return A, b
+
     num_pores = network.Np
     num_rows = A.shape[0]
     num_components = int(num_rows/num_pores)
