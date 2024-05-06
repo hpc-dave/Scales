@@ -281,12 +281,14 @@ class MulticomponentTools:
         if num_components < 1:
             raise (f'number of components has to be positive, following value was provided: {num_components}')
 
-        Nc = num_components
         dVdt = network[weight].copy() if isinstance(weight, str) else weight
         dVdt /= dt
-        dVdt = dVdt.reshape((dVdt.shape[0], 1))
-        if Nc > 1:
-            dVdt = np.tile(A=dVdt, reps=Nc)
+        if isinstance(dVdt, float) or isinstance(dVdt, int):
+            dVdt = np.full((network.Np, 1), fill_value=dVdt, dtype=float)
+        dVdt = dVdt.reshape((-1, 1))
+        if num_components > 1:
+            if dVdt.size == network.Np:
+                dVdt = np.tile(A=dVdt, reps=num_components)
             if include is not None:
                 mask = np.asarray([n in include for n in range(num_components)], dtype=bool).reshape((1, num_components))
                 mask = np.tile(A=mask, reps=(dVdt.shape[0], 1))
@@ -342,6 +344,21 @@ class MulticomponentTools:
             mat_shape = (self.network.Nt * self.num_components, self.network.Np * self.num_components)
             grad = scipy.sparse.coo_matrix((data, (rows, cols)), shape=mat_shape)
             return scipy.sparse.csr_matrix(grad)
+
+    def _compute_flux_matrix(self, *args):
+        network = self.network
+        Nc = self.num_components
+        fluxes = args[-1]
+        for i in range(len(args)-1):
+            arg = args[i]
+            if isinstance(arg, list) and len(arg) == Nc:
+                fluxes.multiply(np.tile(np.asarray(arg), network.Nt))
+            elif isinstance(arg, np.ndarray):
+                _arg = np.tile(arg, reps=(1, Nc)) if arg.size == network.Nt else arg
+                fluxes = fluxes.multiply(_arg.reshape(-1, 1))
+            else:
+                fluxes = fluxes.multiply(args[i])
+        return fluxes
 
     def _construct_div(self, weights=None, custom_weights: bool = False, include=None):
         """
@@ -401,14 +418,7 @@ class MulticomponentTools:
         div_mat = scipy.sparse.csr_matrix(div_mat)
 
         def div(*args):
-            fluxes = args[-1]
-            for i in range(len(args)-1):
-                if isinstance(args[i], list) and len(args[i]) == num_components:
-                    fluxes.multiply(np.tile(np.asarray(args[i]), network.Nt))
-                elif isinstance(args[i], np.ndarray):
-                    fluxes = fluxes.multiply(args[i].reshape(args[i].size, 1))
-                else:
-                    fluxes = fluxes.multiply(args[i])
+            fluxes = self.Fluxes(*args)
             return div_mat * fluxes
 
         return div
@@ -536,25 +546,32 @@ class MulticomponentTools:
         """
         return tuple(range(self.num_components) if include is None else sorted(include))
 
-    def DDT(self, dt: float, weight='pore.volume', include=None):
+    def DDT(self, dt: float = 1., weight='pore.volume', include=None):
+        include = [include] if isinstance(include, int) else include
         key = self._convert_include_to_key(include)
         if key not in self._ddt:
             self._ddt[key] = self._construct_ddt(dt=dt, weight=weight, include=include)
         return self._ddt[key]
 
     def Gradient(self, include=None):
+        include = [include] if isinstance(include, int) else include
         key = self._convert_include_to_key(include)
         if key not in self._grad:
             self._grad[key] = self._construct_grad(include=include)
         return self._grad[key]
 
+    def Fluxes(self, *args):
+        return self._compute_flux_matrix(*args)
+
     def Divergence(self, weights=None, custom_weights: bool = False, include=None):
+        include = [include] if isinstance(include, int) else include
         key = self._convert_include_to_key(include)
         if key not in self._div:
             self._div[key] = self._construct_div(weights=weights, custom_weights=custom_weights)
         return self._div[key]
 
     def Upwind(self, fluxes, include=None):
+        include = [include] if isinstance(include, int) else include
         key = self._convert_include_to_key(include)
         if key not in self._upwind:
             self._upwind[key] = self._construct_upwind(fluxes=fluxes, include=include)
