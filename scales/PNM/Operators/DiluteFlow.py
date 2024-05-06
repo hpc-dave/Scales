@@ -20,10 +20,22 @@ geo = geo_model.spheres_and_cylinders
 network.add_model_collection(geo, domain='all')
 network.regenerate_models()
 
+
+# flow properties
+water = op.phase.Water(network=network)
+water.add_model(propname='throat.hydraulic_conductance',
+                model=op.models.physics.hydraulic_conductance.generic_hydraulic)
+
+sf = op.algorithms.StokesFlow(network=network, phase=water)
+sf.set_value_BC(pores=network.pores('left'), values=1.1e5)
+sf.set_value_BC(pores=network.pores('right'), values=1e5)
+sf.run()
+
 c = np.zeros((network.Np, 1))
 c_old = c.copy()
 bc = {}
 bc['left'] = {'prescribed': 1.}
+bc['right'] = {'outflow': None}
 v = 0.1
 
 mt = MulticomponentTools(network=network, bc=bc)
@@ -43,14 +55,15 @@ time = dt
 # need to provide div with some weights, namely an area
 # that the flux acts on
 A_flux = np.zeros((network.Nt, 1), dtype=float) + network['pore.volume'][0]/spacing
-
+fluid_flux = sf.rate(throats=network.throats('all'), mode='single')
 grad = mt.Gradient()
-c_up = mt.Upwind(fluxes=v)
-div = mt.Divergence(weights=A_flux)
+c_up = mt.Upwind(fluxes=fluid_flux)
+div = mt.Divergence()
 ddt = mt.DDT(dt=dt)
 
-D = np.zeros((network.Nt, 1), dtype=float) + 1e-3
-J = ddt - div(D, grad) + div(v, c_up)
+D = np.full((network.Nt, 1), fill_value=1e-6, dtype=float)
+
+J = ddt - div(D, A_flux, grad) + div(fluid_flux, c_up)
 
 J = mt.ApplyBC(A=J)
 for t in tsteps:
