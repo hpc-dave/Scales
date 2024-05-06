@@ -5,7 +5,7 @@ import spheres_and_cylinders as geo_model
 import numpy as np
 import scipy
 import math
-from OP_operators import construct_grad, construct_div, construct_ddt, ApplyBC
+from OP_operators import MulticomponentTools
 
 Nx = 100
 Ny = 1
@@ -17,7 +17,6 @@ spacing = 1./Nx
 network = op.network.Cubic([Nx, Ny, Nz], spacing=spacing)
 
 # add geometry
-
 geo = geo_model.spheres_and_cylinders
 network.add_model_collection(geo, domain='all')
 network.regenerate_models()
@@ -30,6 +29,8 @@ bc_1 = {}
 bc_1['right'] = {'prescribed': 1.}
 
 bc = [bc_0, bc_1]
+
+mt = MulticomponentTools(network=network, num_components=Nc, bc=bc)
 
 x = np.ndarray.flatten(c).reshape((c.size, 1))
 dx = np.zeros_like(x)
@@ -45,9 +46,9 @@ time = dt
 # that the flux act on
 A_flux = np.zeros((network.Nt, 1), dtype=float) + network['pore.volume'][0]/spacing
 
-grad = construct_grad(network=network, num_components=Nc)
-div = construct_div(network=network, weights=A_flux, num_components=Nc)
-ddt = construct_ddt(network=network, dt=dt, num_components=Nc)
+grad = mt.Gradient()
+div = mt.Divergence(weights=A_flux)
+ddt = mt.DDT(dt=dt)
 
 D = np.ones((network.Nt, Nc), dtype=float)
 J = ddt - div(D, grad)
@@ -67,19 +68,19 @@ zeta = zeta - zeta[0]
 zeta = zeta / (zeta[-1]+0.5*spacing)
 ana_sol = np.zeros_like(c)
 
-J = ApplyBC(network=network, bc=bc, A=J, type='Jacobian')
+J = mt.ApplyBC(A=J, type='Jacobian')
 for t in tsteps:
     x_old = x.copy()
     pos += 1
 
     G = J * x - ddt * x_old
-    G = ApplyBC(network=network, bc=bc, x=x, b=G, type='Defect')
+    G = mt.ApplyBC(x=x, b=G, type='Defect')
     for i in range(max_iter):
         last_iter = i
         dx[:] = scipy.sparse.linalg.spsolve(J, -G).reshape(dx.shape)
         x = x + dx
         G = J * x - ddt * x_old
-        G = ApplyBC(network=network, bc=bc, x=x, b=G, type='Defect')
+        G = mt.ApplyBC(x=x, b=G, type='Defect')
         G_norm = np.linalg.norm(np.abs(G), ord=2)
         if G_norm < tol:
             break

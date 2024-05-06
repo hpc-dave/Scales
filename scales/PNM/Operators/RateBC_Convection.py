@@ -52,9 +52,9 @@ fluxes = np.zeros((network.Nt, 2), dtype=float)
 fluxes[:, 0] = v[0]
 fluxes[:, 1] = v[1]
 
-c_up = mt.upwind(fluxes=fluxes)
-div = mt.divergence(weights=A_flux)
-ddt = mt.ddt(dt=dt)
+c_up = mt.Upwind(fluxes=fluxes)
+div = mt.Divergence(weights=A_flux)
+ddt = mt.DDT(dt=dt)
 
 J = ddt + div(fluxes, c_up)
 J = mt.ApplyBC(A=J, x=x)

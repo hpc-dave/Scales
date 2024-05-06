@@ -4,7 +4,7 @@ import scipy.sparse
 import spheres_and_cylinders as geo_model
 import numpy as np
 import scipy
-from OP_operators import construct_upwind, construct_div, construct_ddt
+from OP_operators import MulticomponentTools
 
 Nx = 100
 Ny = 1
@@ -27,6 +27,7 @@ c[-2, 1] = 1.
 c_old = c.copy()
 bc = {}
 
+mt = MulticomponentTools(network=network, num_components=Nc, bc=bc)
 x = np.ndarray.flatten(c).reshape((c.size, 1))
 dx = np.zeros_like(x)
 
@@ -49,10 +50,10 @@ fluxes[:, 0] = v[0]
 fluxes[:, 1] = v[1]
 
 # construct multiple upwind matrices (directed networks)
-c_up_float = construct_upwind(network=network, fluxes=v[0], num_components=Nc)
-c_up_float_list = construct_upwind(network=network, fluxes=v, num_components=Nc)
-c_up_array_single = construct_upwind(network=network, fluxes=fluxes[:, 0], num_components=Nc)
-c_up_arrays_mult = construct_upwind(network=network, fluxes=fluxes, num_components=Nc)
+c_up_float = mt._construct_upwind(fluxes=v[0])
+c_up_float_list = mt._construct_upwind(fluxes=v)
+c_up_array_single = mt._construct_upwind(fluxes=fluxes[:, 0])
+c_up_arrays_mult = mt.Upwind(fluxes=fluxes)
 
 # check the implementations
 if scipy.sparse.find(c_up_float_list - c_up_arrays_mult)[0].size > 0:
@@ -62,8 +63,8 @@ if scipy.sparse.find(c_up_float - c_up_array_single)[0].size > 0:
     raise ('matrices are inconsistent, check implementation')
 
 c_up = c_up_arrays_mult
-div = construct_div(network=network, weights=A_flux, num_components=Nc)
-ddt = construct_ddt(network=network, dt=dt, num_components=Nc)
+div = mt.Divergence(weights=A_flux)
+ddt = mt.DDT(dt=dt)
 
 J = ddt + div(fluxes, c_up)
 
