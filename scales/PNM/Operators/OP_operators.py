@@ -135,6 +135,11 @@ def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, t
         type of algorithm/affected part of the LES, special treatments are required
         if the defect for Newton-Raphson iterations is computed
 
+    Returns:
+    Manipulated matrix A and rhs b. Currently, if more than one component is specified, the
+    matrix will be converted into CSR format. Otherwise the output type depends on the input
+    type. CSR will return a CSR matrix, all other types a LIL matrix.
+
     Notes
     -----
     An outflow pore is not integrated and not divergence free. The value in the affected
@@ -149,6 +154,9 @@ def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, t
     row_aff = pore_labels * num_components + n_c
 
     if A is not None:
+        if num_components > 1:
+            A = scipy.sparse.csr_matrix(A)
+
         if scipy.sparse.isspmatrix_csr(A):
             # optimization for csr matrix (avoid changing the sparsity structure)
             # note that we expect here that the center value is allocated!
@@ -159,7 +167,21 @@ def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, t
                 mask = ind == r
                 pos_nb = np.where(~mask)[0] + ptr[0]
                 pos_c = np.where(mask)[0] + ptr[0]
-                coeff = np.sum(A.data[pos_nb])
+                if num_components > 1:
+                    pos_avg = [p for p in pos_nb if p % num_components == n_c]
+                    pos_rem = [p for p in pos_nb if p not in pos_avg]
+                    if pos_rem:
+                        A.data[pos_rem] = 0.
+                else:
+                    pos_avg = pos_nb
+                # if an error occurs here, because 'pos_avg' is empty,
+                # that means that the affected pore is isolated and has
+                # no connection (within the matrix-graph) with the surrounding pores
+                # check your model setup and matrix generation. Make sure to apply
+                # an outflow condition ONLY, where a flow is actually occuring!
+                # A counter example would be surface accumulation without movement
+                # of the bound species!
+                coeff = np.sum(A.data[pos_avg])
                 A.data[pos_c] = -coeff
         else:
             A = scipy.sparse.lil_matrix(A)
@@ -202,7 +224,9 @@ def ApplyBC(network, bc, A=None, x=None, b=None, type='Jacobian'):
     for n_c, boundary in enumerate(bc):
         for label, param in boundary.items():
             bc_pores = network.pores(label)
-            if 'prescribed' in param or 'value' in param:
+            if 'noflow' in param:
+                continue  # dummy so we can write fully specified systems
+            elif 'prescribed' in param or 'value' in param:
                 A, b = _apply_prescribed_bc(pore_labels=bc_pores,
                                             bc=param,
                                             num_components=num_components, n_c=n_c,
@@ -348,11 +372,11 @@ class MulticomponentTools:
     def _compute_flux_matrix(self, *args):
         network = self.network
         Nc = self.num_components
-        fluxes = args[-1]
+        fluxes = args[-1].copy()
         for i in range(len(args)-1):
             arg = args[i]
             if isinstance(arg, list) and len(arg) == Nc:
-                fluxes.multiply(np.tile(np.asarray(arg), network.Nt))
+                fluxes = fluxes.multiply(np.tile(np.asarray(arg), network.Nt))
             elif isinstance(arg, np.ndarray):
                 _arg = np.tile(arg, reps=(1, Nc)) if arg.size == network.Nt else arg
                 fluxes = fluxes.multiply(_arg.reshape(-1, 1))
