@@ -168,7 +168,7 @@ def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, t
                 pos_nb = np.where(~mask)[0] + ptr[0]
                 pos_c = np.where(mask)[0] + ptr[0]
                 if num_components > 1:
-                    pos_avg = [p for p in pos_nb if p % num_components == n_c]
+                    pos_avg = [p for p in pos_nb if A.indices[p] % num_components == n_c]
                     pos_rem = [p for p in pos_nb if p not in pos_avg]
                     if pos_rem:
                         A.data[pos_rem] = 0.
@@ -378,7 +378,7 @@ class MulticomponentTools:
             if isinstance(arg, list) and len(arg) == Nc:
                 fluxes = fluxes.multiply(np.tile(np.asarray(arg), network.Nt))
             elif isinstance(arg, np.ndarray):
-                _arg = np.tile(arg, reps=(1, Nc)) if arg.size == network.Nt else arg
+                _arg = np.tile(arg.reshape(-1, 1), reps=(1, Nc)) if arg.size == network.Nt else arg
                 fluxes = fluxes.multiply(_arg.reshape(-1, 1))
             else:
                 fluxes = fluxes.multiply(args[i])

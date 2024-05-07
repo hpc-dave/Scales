@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 from OP_operators import MulticomponentTools
 
 Nx = 10
-Ny = 1
+Ny = 2
 Nz = 1
 Nc = 2  # fluid concentration + adsorbed species
 spacing = 1./Nx
@@ -66,14 +66,14 @@ time = dt
 # that the flux acts on
 A_flux = np.full((network.Nt, 1), dtype=float, fill_value=network['pore.volume'][0]/spacing)
 A_pore = np.full((network.Np, 1), fill_value=a_v)
-fluid_flux = sf.rate(throats=network.throats('all'), mode='single') * 0.01
+fluid_flux = sf.rate(throats=network.throats('all'), mode='single')*0.01
 grad = mt.Gradient(include=0)
 c_up = mt.Upwind(fluxes=fluid_flux, include=0)
 div = mt.Divergence(include=0)
 ddt = mt.DDT(dt=dt)
 
-k_reac = 0.1
-k_ads = 1
+k_reac = 1.
+k_ads = 0.1
 r_ads_0 = np.zeros((network.Np, 2), dtype=float)
 r_ads_1 = np.zeros_like(r_ads_0)
 r_ads_0[:, 0], r_ads_0[:, 1] = k_reac * k_ads * network['pore.a_V'], -k_reac * network['pore.a_V']
@@ -102,11 +102,17 @@ flux_out = 0
 signal = np.zeros((len(tsteps)+1), dtype=float)
 response = np.zeros((len(tsteps)+1), dtype=float)
 
-signal[0] = c[0, 0]
-response[0] = c[-1, 0]
+
+inlet_pores = network.pores('left')
+outlet_pores = network.pores('right')
+pores_internal = network.pores(labels=['left', 'right'], mode='nor')
+throats_in = network.find_neighbor_throats(pores=inlet_pores, mode='xor')
+throats_out = network.find_neighbor_throats(pores=outlet_pores, mode='xor')
+signal[0] = np.average(c[inlet_pores, 0])
+response[0] = np.average(c[outlet_pores, 0])
 
 for t in tsteps:
-    if t == 10:
+    if t == 5:
         bc[0]['left']['prescribed'] = 0.
 
     x_old = x.copy()
@@ -129,14 +135,14 @@ for t in tsteps:
     flux_conv = conv * x    # mol/s
     flux_diff = -diff * x    # mol/s
     flux_tot = (flux_conv + flux_diff).reshape((-1, Nc))  # mol/s
-    flux_in += np.sum(flux_tot[0, :]) * dt    # mol
-    flux_out += np.sum(flux_tot[-1, :]) * dt  # mol
+    flux_in += np.sum(flux_tot[throats_in, :]) * dt    # mol
+    flux_out += np.sum(flux_tot[throats_out, :]) * dt  # mol
     mass = c * network['pore.volume'].reshape((-1, 1))
     mass[:, 1] *= network['pore.a_V']
-    mass_err = (flux_in - flux_out) / (np.sum(mass[1:-1, :]))-1
+    mass_err = (flux_in - flux_out) / (np.sum(mass[pores_internal, :]))-1
     print(f'{t}/{len(tsteps)} - {time}: {last_iter + 1} it [Defect:{G_norm:1.2e} mass: {mass_err:1.2e}]')
-    signal[t] = c[0, 0]
-    response[t] = c[-1, 0]
+    signal[t] = np.average(c[inlet_pores, 0])
+    response[t] = np.average(c[outlet_pores, 0])
     time += dt
 
 plt.plot(signal, '-', response, '.')
