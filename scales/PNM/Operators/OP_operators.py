@@ -2,7 +2,7 @@ import numpy as np
 import scipy
 import scipy.sparse
 import inspect
-
+from NumericalDifferentiation import NumericalDifferentiation
 
 def GetLineInfo():
     r"""
@@ -571,6 +571,24 @@ class MulticomponentTools:
         return tuple(range(self.num_components) if include is None else sorted(include))
 
     def DDT(self, dt: float = 1., weight='pore.volume', include=None):
+        r"""
+        Computes partial time derivative matrix
+
+        Parameters
+        ----------
+        dt: float
+            discretized time step size
+        weight: any
+            a weight which can be applied to the time derivative, usually that should be
+            the volume of the computational cell
+        include:
+            an ID or list of IDs which should be included in the matrix, if 'None' is provided,'
+            all values will be used
+        
+        Returns
+        -------
+        Matrix in CSR format
+        """
         include = [include] if isinstance(include, int) else include
         key = self._convert_include_to_key(include)
         if key not in self._ddt:
@@ -578,6 +596,19 @@ class MulticomponentTools:
         return self._ddt[key]
 
     def Gradient(self, include=None):
+        r"""
+        Computes a gradient matrix
+
+        Parameters
+        ----------
+        include:
+            int or list of ints with IDs to include, if 'None' is provided
+            all IDs will be included
+
+        Returns
+        -------
+        a gradient matrix in CSR-format
+        """
         include = [include] if isinstance(include, int) else include
         key = self._convert_include_to_key(include)
         if key not in self._grad:
@@ -585,6 +616,16 @@ class MulticomponentTools:
         return self._grad[key]
 
     def Fluxes(self, *args):
+        r"""
+        computes fluxes from a set of arguments
+
+        Parameters
+        ----------
+        args:
+            Set of arguments, where the last argument is either a gradient matrix,
+            vector of fluxes at the throats or flux matrix. All arguments before will
+            be multiplied with this value
+        """
         return self._compute_flux_matrix(*args)
 
     def Divergence(self, weights=None, custom_weights: bool = False, include=None):
@@ -603,3 +644,11 @@ class MulticomponentTools:
 
     def ApplyBC(self, A=None, x=None, b=None, type='Jacobian'):
         return ApplyBC(self.network, bc=self.bc, A=A, x=x, b=b, type=type)
+
+    def NumericalDifferenciation(self, c, defect_func, dc: float = 1e-6, mem_opt: str = 'full', type: str = 'Jacobian'):
+        if type == 'Jacobian':
+            return NumericalDifferentiation(c=c, defect_func=defect_func, dc=dc, type=mem_opt)
+        elif type == 'Defect':
+            return defect_func(c).reshape((-1, 1))
+        else:
+            raise ('Unknown type for numerical differentiation')

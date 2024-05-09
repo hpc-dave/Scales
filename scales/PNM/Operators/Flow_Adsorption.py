@@ -66,7 +66,7 @@ time = dt
 # that the flux acts on
 A_flux = np.full((network.Nt, 1), dtype=float, fill_value=network['pore.volume'][0]/spacing)
 A_pore = np.full((network.Np, 1), fill_value=a_v)
-fluid_flux = sf.rate(throats=network.throats('all'), mode='single')*0.01
+fluid_flux = sf.rate(throats=network.throats('all'), mode='single')*0.005
 grad = mt.Gradient(include=0)
 c_up = mt.Upwind(fluxes=fluid_flux, include=0)
 div = mt.Divergence(include=0)
@@ -112,7 +112,7 @@ signal[0] = np.average(c[inlet_pores, 0])
 response[0] = np.average(c[outlet_pores, 0])
 
 for t in tsteps:
-    if t == 5:
+    if t == 10:
         bc[0]['left']['prescribed'] = 0.
 
     x_old = x.copy()
