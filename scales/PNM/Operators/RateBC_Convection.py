@@ -4,7 +4,7 @@ import scipy.sparse
 import spheres_and_cylinders as geo_model
 import numpy as np
 import scipy
-from OP_operators import MulticomponentTools
+from OP_operators import MulticomponentTools, ComputeRateForBC
 
 Nx = 100
 Ny = 1
@@ -59,6 +59,8 @@ ddt = mt.DDT(dt=dt)
 J = ddt + div(fluxes, c_up)
 J = mt.ApplyBC(A=J, x=x)
 
+rate_0 = ComputeRateForBC(bc[0]['left'], phi=c[network.pores('left'), :])
+
 mass_init = np.sum(c * network['pore.volume'].reshape(network.Np, 1), axis=0)
 
 for t in tsteps:
@@ -80,6 +82,7 @@ for t in tsteps:
         print(f'WARNING: the maximum iterations ({max_iter}) were reached!')
 
     c = x.reshape(-1, Nc)
+    rate_0 = ComputeRateForBC(bc[0]['left'], phi=c[network.pores('left'), 0])
     mass_tot = np.sum(c * network['pore.volume'].reshape(network.Np, 1), axis=0)
     mass_in = rate_in * time
     mass_err = (mass_tot - mass_init)/mass_in - 1

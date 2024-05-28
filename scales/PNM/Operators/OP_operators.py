@@ -4,6 +4,7 @@ import scipy.sparse
 import inspect
 from NumericalDifferentiation import NumericalDifferentiation
 
+
 def GetLineInfo():
     r"""
     Provides information of calling point in the form: <path/to/file>: l. <line number> in <function name>
@@ -74,8 +75,7 @@ def _apply_rate_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type
     pore_labels: array_like
         pore ids of the affected pores
     bc: dict
-        the values associated with the boundary condition, currently supported keywords
-        are 'value' and 'prescribed'
+        the values associated with the boundary condition, currently supported keyword is 'rate'
     num_components: int
         number of implicitly coupled components in the linear equation system
     n_c: int
@@ -101,7 +101,7 @@ def _apply_rate_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, type
     row_aff = pore_labels * num_components + n_c
     value = bc['rate']
     if isinstance(value, float) or isinstance(value, int):
-        values = np.full(row_aff.shape, value, dtype=float)
+        values = np.full(row_aff.shape, value/row_aff.size, dtype=float)
     else:
         values = value
 
@@ -119,8 +119,7 @@ def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, t
     pore_labels: array_like
         pore ids of the affected pores
     bc: dict
-        the values associated with the boundary condition, currently supported keywords
-        are 'value' and 'prescribed'
+        the values associated with the boundary condition, currently not in use here
     num_components: int
         number of implicitly coupled components in the linear equation system
     n_c: int
@@ -174,14 +173,8 @@ def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, t
                         A.data[pos_rem] = 0.
                 else:
                     pos_avg = pos_nb
-                # if an error occurs here, because 'pos_avg' is empty,
-                # that means that the affected pore is isolated and has
-                # no connection (within the matrix-graph) with the surrounding pores
-                # check your model setup and matrix generation. Make sure to apply
-                # an outflow condition ONLY, where a flow is actually occuring!
-                # A counter example would be surface accumulation without movement
-                # of the bound species!
                 coeff = np.sum(A.data[pos_avg])
+                coeff = -1. if coeff == 0 else coeff
                 A.data[pos_c] = -coeff
         else:
             A = scipy.sparse.lil_matrix(A)
@@ -192,6 +185,49 @@ def _apply_outflow_bc(pore_labels, bc, num_components: int, n_c: int, A, x, b, t
         b[row_aff] = 0.
 
     return A, b
+
+
+def ComputeRateForBC(bc, phi, rate_old=None):
+    r"""
+    Computes the values for a rate boundary, based on the the field values with
+    the target to keep the all values at the boundary close to each other. As an example,
+    to keep the pressure inside all affected pores at the same level.
+
+    Notes
+    -----
+    Keep in mind, that the rate is defined as total rate with the unit [a.u.]/s, NOT as
+    [a.u.]/(m²s)!
+    """
+    if bc is not None:
+        # My brain was pretty cooked when writing this function, be sure to test it
+        # before applying!
+        raise ('Untested!')
+    rate = bc['rate']
+    if rate_old is None:
+        if isinstance(rate, float) or isinstance(rate, int):
+            rate_old = np.full(phi.shape, fill_value=rate/phi.size, dtype=float)
+        else:
+            rate_old = rate
+
+    phi_avg = np.average(phi)/phi.size
+    dphi = phi-phi_avg
+    sum_phi = np.sum(np.abs(phi))
+    sum_dphi = np.sum(np.abs(dphi))
+    if sum_dphi == 0.:
+        return rate_old
+    rate_tot = np.sum(rate_old)
+    sum_phi = sum_phi if sum_phi > 0. else 1.
+    sum_phi = sum_phi if sum_phi > sum_dphi else sum_dphi
+    drate_tot = sum_dphi / sum_phi * rate_tot
+    rate_lower = dphi > 0.
+    w_rate = np.zeros(dphi.shape, dtype=float)
+    w_rate[rate_lower] = -drate_tot * dphi[rate_lower] / np.sum(dphi[rate_lower])
+    w_rate[~rate_lower] = -drate_tot * dphi[~rate_lower] / np.sum(-dphi[~rate_lower])
+    drate = w_rate * drate_tot
+    if np.sum(drate) != 0.:
+        raise ('determined changes of rate are not conservative')
+    rate_new = rate_old + drate
+    return rate_new
 
 
 def ApplyBC(network, bc, A=None, x=None, b=None, type='Jacobian'):
@@ -314,7 +350,7 @@ class MulticomponentTools:
             if dVdt.size == network.Np:
                 dVdt = np.tile(A=dVdt, reps=num_components)
             if include is not None:
-                mask = np.asarray([n in include for n in range(num_components)], dtype=bool).reshape((1, num_components))
+                mask = np.asarray([n in include for n in range(num_components)], dtype=bool).reshape((1, -1))
                 mask = np.tile(A=mask, reps=(dVdt.shape[0], 1))
                 dVdt[~mask] = 0.
         ddt = scipy.sparse.spdiags(data=[dVdt.ravel()], diags=[0])
@@ -584,7 +620,7 @@ class MulticomponentTools:
         include:
             an ID or list of IDs which should be included in the matrix, if 'None' is provided,'
             all values will be used
-        
+
         Returns
         -------
         Matrix in CSR format

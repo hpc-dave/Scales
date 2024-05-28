@@ -185,29 +185,29 @@ def NumericalDifferentiation(c, defect_func, dc: float = 1e-6, type: str = 'full
         raise (f'Unknown type: {type}')
 
 
-# testing
-sizes = [50, 100, 500, 1000, 2000, 5000]
+def _testing():
+    sizes = [50, 100, 500, 1000, 2000, 5000]
 
-for size in sizes:
-    print(f'size -> {size}')
-    c = np.zeros((size, 1), dtype=float)
+    for size in sizes:
+        print(f'size -> {size}')
+        c = np.zeros((size, 1), dtype=float)
 
-    J_0 = np.arange(c.size, dtype=float)
-    J_0 = np.tile(J_0, reps=[c.size, 1])
-    J_0 += (np.arange(c.size) * c.size).reshape((-1, 1))
-    J_0 = np.matrix(J_0)
+        J_0 = np.arange(c.size, dtype=float)
+        J_0 = np.tile(J_0, reps=[c.size, 1])
+        J_0 += (np.arange(c.size) * c.size).reshape((-1, 1))
+        J_0 = np.matrix(J_0)
 
-    def Defect(c, *args):
-        return J_0 * c.reshape((c.size, 1))
+        def Defect(c, *args):
+            return J_0 * c.reshape((c.size, 1))
 
-    tic = time.perf_counter_ns()
-    J, G = NumericalDifferentiation(c, defect_func=Defect, type='full')
-    toc = time.perf_counter_ns()
-    print(f'block: {(toc-tic)*1e-9:1.2e} s')
-    tic = time.perf_counter_ns()
-    J, G = NumericalDifferentiation(c, defect_func=Defect, type='low_mem')
-    toc = time.perf_counter_ns()
-    print(f'low mem: {(toc-tic)*1e-9:1.2e} s')
-    err = np.sum(np.abs(J-J_0))
+        tic = time.perf_counter_ns()
+        J, G = NumericalDifferentiation(c, defect_func=Defect, type='full')
+        toc = time.perf_counter_ns()
+        print(f'block: {(toc-tic)*1e-9:1.2e} s')
+        tic = time.perf_counter_ns()
+        J, G = NumericalDifferentiation(c, defect_func=Defect, type='low_mem')
+        toc = time.perf_counter_ns()
+        print(f'low mem: {(toc-tic)*1e-9:1.2e} s')
+        err = np.sum(np.abs(J-J_0))
 
-print('finished')
+    print('finished')
