@@ -6,7 +6,7 @@ import spheres_and_cylinders as geo_model
 from matplotlib import pyplot as plt
 import numpy as np
 import scipy
-from OP_operators import construct_grad, construct_div, construct_ddt, ApplyBC, EnforcePrescribed
+from OP_operators import MulticomponentTools
 import time
 
 Nx = 10
@@ -31,25 +31,33 @@ bc['right'] = {'prescribed': 0.}
 
 x = np.ndarray.flatten(c).reshape((c.size, 1))
 dx = np.zeros_like(x)
+x_old = x.copy()
 
-grad = construct_grad(network=network)
-div = construct_div(network=network)
-ddt = construct_ddt(network=network, dt=0.01)
+mt = MulticomponentTools(network=network, num_components=1, bc=bc)
+grad = mt.Gradient()
+div = mt.Divergence()
+ddt = mt.DDT(dt=0.0001)
 D = np.ones((network.Nt, 1), dtype=float)
 
 J = ddt - div(D, grad)
+J = mt.ApplyBC(A=J)
+
 for i in range(10):
+    # timesteps
     x_old = x.copy()
-    J, b = ApplyBC(network=network, bc=bc, A=J)
 
-    G = J * x - ddt * x_old - b
+    G = J * x - ddt * x_old
+    G = mt.ApplyBC(x=x, b=G, type='Defect')
 
-    tic = time.perf_counter_ns()
-    J, G = EnforcePrescribed(network=network, bc=bc, A=J, x=x, b=G)
-    toc = time.perf_counter_ns()
-    print(f'elapsed time: {toc-tic} ns')
-    dx[:] = scipy.sparse.linalg.spsolve(J, -G).reshape(dx.shape)
-    x = x + dx
+    for n in range(10):
+        # iterations (should not take more than one!)
+        dx[:] = scipy.sparse.linalg.spsolve(J, -G).reshape(dx.shape)
+        x = x + dx
+        G = J * x - ddt * x_old
+        G = mt.ApplyBC(x=x, b=G, type='Defect')
+        G_norm = np.linalg.norm(np.abs(G), ord=2)
+        if G_norm < 1e-6:
+            break
 
 # define a phase
 phase = op.phase.Air(network=network)
