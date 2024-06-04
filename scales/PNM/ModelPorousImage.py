@@ -19,10 +19,16 @@ def AddBox(image, point1, point2, value):
     return image
 
 
-def AddBall(image, center, radius, value):
+def AddBall(image, center, radius, value, bb_l=None, bb_h=None):
     dim = len(image.shape)
-    pc = np.array(center)
-    shape = np.array(image.shape)
+    bb_l = np.zeros_like(image.shape) if bb_l is None else np.asarray(bb_l)
+    bb_h = np.asarray([n for n in image.shape]) if bb_h is None else np.asarray(bb_h)
+    bb_l[bb_l < 0] = 0
+    mask = bb_h > np.asarray(image.shape)
+    bb_h[mask] = np.asarray(image.shape)[mask]
+
+    pc = np.asarray(center) - np.asarray(bb_l)
+    shape = np.asarray([bb_h[n] - bb_l[n] for n in range(dim)])
     shape = np.append(shape, dim)
 
     prel = np.zeros(shape=shape, dtype=float)
@@ -34,8 +40,14 @@ def AddBall(image, center, radius, value):
         shape_l[d] = 1
         prel[..., d] = np.tile(l_v, shape_l)
 
-    mask = np.sqrt(np.sum(prel, axis=-1)) <= radius
-    image[mask] = value
+    mask = (np.sum(prel, axis=-1)) <= radius**2
+    # bb_h -= 1
+    if dim == 3:
+        image[bb_l[0]: bb_h[0], bb_l[1]:bb_h[1], bb_l[2]:bb_h[2]][mask] = value
+    elif dim == 2:
+        image[bb_l[0]: bb_h[0], bb_l[1]:bb_h[1]][mask] = value
+    else:
+        raise ValueError('Only 2 or 3 dimensional images are allowed currently')
     return image
 
 
