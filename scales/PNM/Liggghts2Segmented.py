@@ -20,20 +20,20 @@ def _get_bounding_box_sphere(center, radius, safety: int = 2):
     return bb_low, bb_high
 
 
-def run(file_in: str, file_out: str, system_size, resolution, tube_wall = None, offset=None):
+def run(file_in: str, file_out: str, system_size, resolution, tube_wall=None, pad=None):
     x, y, z, r = rl.Read(filename=file_in, extract_columns=['x', 'y', 'z', 'radius'])
 
     dim = len(system_size)
+    if pad is None:
+        pad = list([0 for _ in range(dim)])
     dl = [float(e[1])-float(e[0]) for e in system_size]
     dl_min = np.min(dl)
     dn = dl_min/resolution
-    res_im = tuple(int(dl[n]/dn) for n in range(dim))
+    res_im = tuple(int(dl[n]/dn)+pad[n]*2 for n in range(dim))
 
     image = np.zeros(res_im, dtype=bool)
-    if offset is None:
-        offset = [-system_size[n][0] for n in range(dim)]
-    if len(offset) != dim:
-        raise ValueError('offset dimensions are not consistent')
+
+    offset = [-system_size[n][0] for n in range(dim)]
 
     num_obj = x.size
     bb_low = np.zeros((num_obj, dim), dtype=int)
@@ -47,10 +47,10 @@ def run(file_in: str, file_out: str, system_size, resolution, tube_wall = None, 
 
     for n in tqdm(range(num_obj)):
         mp.AddBall(image=image,
-                   center=[(x[n]+offset[0])/dn, (y[n]+offset[1])/dn, (z[n]+offset[2])/dn], radius=r[n]/dn,
+                   center=center[n, :] + np.asarray(pad), radius=r[n]/dn,
                    value=True,
-                   bb_l=bb_low[n, :],
-                   bb_h=bb_high[n, :])
+                   bb_l=bb_low[n, :] + np.asarray(pad),
+                   bb_h=bb_high[n, :] + np.asarray(pad))
 
     if tube_wall is not None:
         dir = int(tube_wall['direction'])
@@ -58,7 +58,7 @@ def run(file_in: str, file_out: str, system_size, resolution, tube_wall = None, 
         dir_0 = dim_cross[0]
         dir_1 = dim_cross[1]
         d_cross = np.zeros((image.shape[dir_0], image.shape[dir_1], 2), dtype=float)
-        pc = np.asarray([tube_wall['center'][dir_0]/dn, tube_wall['center'][dir_1]/dn], dtype=float)
+        pc = np.asarray([tube_wall['center'][dir_0]/dn+pad[dir_0], tube_wall['center'][dir_1]/dn+pad[dir_1]], dtype=float)
         radius = float(tube_wall['radius']/dn)
 
         for i in range(len(dim_cross)):
