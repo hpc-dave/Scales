@@ -9,35 +9,7 @@ dir = os.path.dirname(os.path.realpath(__file__))
 dir = os.path.dirname(dir)
 sys.path.append(dir + os.path.sep + 'IO')
 
-import ReadLiggghts as rl
-
-
-def AddBall(image, center, radius, value, bb_l=None, bb_h=None):
-    dim = len(image.shape)
-    bb_l = np.zeros_like(image.shape) if bb_l is None else np.asarray(bb_l)
-    bb_h = np.asarray([n for n in image.shape]) if bb_h is None else np.asarray(bb_h)
-    bb_l[bb_l < 0] = 0
-    mask = bb_h > np.asarray(image.shape)
-    bb_h[mask] = np.asarray(image.shape)[mask]
-
-    pc = np.asarray(center) - np.asarray(bb_l)
-    shape = np.asarray([bb_h[n] - bb_l[n] for n in range(dim)])
-    shape = np.append(shape, dim)
-
-    prel = np.zeros(shape=shape, dtype=float)
-    for d in range(dim):
-        shape_l = np.ones_like(shape[:-1])
-        shape_l[d] = shape[d]
-        l_v = np.reshape((np.array(range(shape[d])) - pc[d])**2, shape_l)
-        shape_l = shape[:-1].copy()
-        shape_l[d] = 1
-        prel[..., d] = np.tile(l_v, shape_l)
-
-    mask = (np.sum(prel, axis=-1)) <= radius**2
-    # bb_h -= 1
-    if dim==3:
-        image[bb_l[0]: bb_h[0], bb_l[1]:bb_h[1], bb_l[2]:bb_h[2]][mask] = value
-    return image
+import ReadLiggghts as rl   # noqa: E402
 
 
 def _get_bounding_box_sphere(center, radius, safety: int = 2):
@@ -102,7 +74,7 @@ def run(file_in: str, file_out: str, system_size, resolution, tube_wall = None):
     skimage.io.imsave(file_out, image)
 
 
-filename = '/home/drieder/Data/cylinder1000000.liggghts'
-imagename = '/home/drieder/Data/cylinder1000000.tiff'
-tube = {'direction': 2, 'radius': 0.5, 'center': (0.5, 0.5, 0.)}
-run(file_in=filename, file_out=imagename, system_size=[[-0.5, 0.5], [-0.5, 0.5], [0., 100.]], resolution=100, tube_wall=tube)
+# filename = '/home/drieder/Data/cylinder1000000.liggghts'
+# imagename = '/home/drieder/Data/cylinder1000000.tiff'
+# tube = {'direction': 2, 'radius': 0.5, 'center': (0.5, 0.5, 0.)}
+# run(file_in=filename, file_out=imagename, system_size=[[-0.5, 0.5], [-0.5, 0.5], [0., 100.]], resolution=100, tube_wall=tube)
