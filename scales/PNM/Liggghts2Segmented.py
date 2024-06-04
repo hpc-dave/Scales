@@ -58,7 +58,9 @@ def run(file_in: str, file_out: str, system_size, resolution, tube_wall=None, pa
         dir_0 = dim_cross[0]
         dir_1 = dim_cross[1]
         d_cross = np.zeros((image.shape[dir_0], image.shape[dir_1], 2), dtype=float)
-        pc = np.asarray([tube_wall['center'][dir_0]/dn+pad[dir_0], tube_wall['center'][dir_1]/dn+pad[dir_1]], dtype=float)
+        pc = np.asarray([(tube_wall['center'][dir_0]+offset[dir_0])/dn+pad[dir_0],
+                         (tube_wall['center'][dir_1]+offset[dir_0])/dn+pad[dir_1]],
+                         dtype=float)
         radius = float(tube_wall['radius']/dn)
 
         for i in range(len(dim_cross)):
