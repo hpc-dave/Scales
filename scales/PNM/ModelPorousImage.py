@@ -25,12 +25,14 @@ def AddBall(image, center, radius, value, bb_l=None, bb_h=None):
     bb_h = np.asarray([n for n in image.shape]) if bb_h is None else np.asarray(bb_h)
     bb_l[bb_l < 0] = 0
     mask = bb_h > np.asarray(image.shape)
-    bb_h[mask] = np.asarray(image.shape)[mask]
+    bb_h[mask] = np.asarray(image.shape)[mask]\
 
     pc = np.asarray(center) - np.asarray(bb_l)
     shape = np.asarray([bb_h[n] - bb_l[n] for n in range(dim)])
     shape = np.append(shape, dim)
 
+    if np.any(shape < 1):
+        return image
     prel = np.zeros(shape=shape, dtype=float)
     for d in range(dim):
         shape_l = np.ones_like(shape[:-1])

@@ -44,10 +44,3 @@ def Read(filename: str,
             return (np.asarray(data[e]) for e in extract_columns)
         else:
             return np.asarray(data[extract_columns])
-
-filename = '/home/drieder/Data/cylinder1000000.liggghts'
-data = Read(filename=filename)
-
-radius = np.asarray(data.radius)
-
-r, x, y, z = Read(filename=filename, extract_columns=['radius', 'x', 'y', 'z'])

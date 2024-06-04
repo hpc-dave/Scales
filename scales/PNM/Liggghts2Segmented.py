@@ -20,7 +20,7 @@ def _get_bounding_box_sphere(center, radius, safety: int = 2):
     return bb_low, bb_high
 
 
-def run(file_in: str, file_out: str, system_size, resolution, tube_wall = None):
+def run(file_in: str, file_out: str, system_size, resolution, tube_wall = None, offset=None):
     x, y, z, r = rl.Read(filename=file_in, extract_columns=['x', 'y', 'z', 'radius'])
 
     dim = len(system_size)
@@ -30,7 +30,10 @@ def run(file_in: str, file_out: str, system_size, resolution, tube_wall = None):
     res_im = tuple(int(dl[n]/dn) for n in range(dim))
 
     image = np.zeros(res_im, dtype=bool)
-    offset = [-system_size[n][0] for n in range(dim)]
+    if offset is None:
+        offset = [-system_size[n][0] for n in range(dim)]
+    if len(offset) != dim:
+        raise ValueError('offset dimensions are not consistent')
 
     num_obj = x.size
     bb_low = np.zeros((num_obj, dim), dtype=int)
