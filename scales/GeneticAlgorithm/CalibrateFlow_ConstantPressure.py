@@ -25,7 +25,7 @@ n_range = [0.5, 2.]
 
 # dummy peak
 peak_exp = {}
-peak_exp['time'] = np.linspace(0, 50., 100)
+peak_exp['time'] = np.linspace(0, 500., 100)
 
 # flow_rate = 0.001  # in m^3/s
 delta_P = 250      # Pa
@@ -62,7 +62,7 @@ bc_mass['right'] = {'outflow'}
 
 
 # numerical details
-tol_flow = 1e-12
+tol_flow = 1e-8
 tol_mass = 1e-6
 max_iter = 100
 
