@@ -8,6 +8,9 @@ import scipy
 import math
 import argparse
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+from pathos.multiprocessing import ProcessingPool as Pool
+import time
 
 #################
 # User settings #
@@ -24,7 +27,7 @@ parser.add_argument('--parallel', type=int, help='number of parallel processes')
 num_generations = 100
 population_size = 500
 num_parents_mating = 4
-mutation_probability = 0.2
+mutation_probability = 0.05
 
 parallel_processing = None
 
@@ -50,6 +53,10 @@ print(f'Parallel processing:      {0 if parallel_processing is None else paralle
 F_range = [0.5, 2.]
 m_range = [0.5, 2.]
 n_range = [0.5, 2.]
+
+F_res = 0.1
+m_res = 0.2
+n_res = 0.2
 
 # dummy peak
 flow_rates = [1e-5, 5e-5, 1e-4]     # in m^3/s
@@ -228,7 +235,6 @@ peak_exp = ComputeAllPeaks(analytical_solution)
 # plt.show()
 # plt.pause(1)
 
-
 def fitness_func(ga, solution, solution_idx):
     fitness = 1.
     try:
@@ -243,33 +249,81 @@ def fitness_func(ga, solution, solution_idx):
 
 
 def show_progress(ga):
-    best_sol = ''.join(f'{entry:1.3f} ' for entry in ga.best_solutions[-1])
-    best_sol_fit = f'{ga.best_solutions_fitness[-1]:1.2e}'
+    best_solution, best_solution_fitness, _ = ga.best_solution()
+    best_sol = ''.join(f'{entry:1.3f} ' for entry in best_solution)
+    best_sol_fit = f'{best_solution_fitness:1.2e}'
     print(f'Generation {ga.generations_completed}/{ga.num_generations} - best solution: {best_sol} ({best_sol_fit})')
 
-# F, m, n
-num_genes = len(analytical_solution)
-gene_space = [F_range, m_range, n_range]
-initial_population = [[random.uniform(x[0], 2. if x[1] is None else x[1]) for x in gene_space] for _ in range(population_size)]
 
-ga_instance = pygad.GA(initial_population=initial_population,
-                       num_generations=num_generations,
-                       num_parents_mating=num_parents_mating,
-                       fitness_func=fitness_func,
-                       mutation_probability=mutation_probability,
-                       gene_type=float,
-                       gene_space=gene_space,
-                       allow_duplicate_genes=False,
-                       suppress_warnings=True,
-                       parent_selection_type='rank',
-                       parallel_processing=parallel_processing,
-                       on_generation=show_progress,
-                       save_best_solutions=True,
-                       keep_elitism=25)
-ga_instance.run()
+num_Fval = int((F_range[1]-F_range[0])/F_res)
+num_mval = int((m_range[1]-m_range[0])/m_res)
+num_nval = int((n_range[1]-n_range[0])/n_res)
+best_solution = [-1., -1., -1.]
+best_solution_fitness = 0.
 
-best_solution = ga_instance.best_solutions[-1]
-best_solution_fitness = ga_instance.best_solutions_fitness[-1]
+num_procs = parallel_processing[1] if parallel_processing is not None else 4
+pool = Pool(num_procs)
+def inner_loop(i: int):
+    best_solution_l = [-1., -1., -1.]
+    best_solution_fitness_l = 0.
+    F = i * F_res + F_range[0]
+    for m_i in range(num_mval):
+        m = m_i * m_res + m_range[0]
+        for n_i in range(num_nval):
+            n = n_i * n_res + n_range[0]
+            fit_l = fitness_func(0, [F, m, n], 0)
+            if fit_l > best_solution_fitness_l:
+                best_solution_l = [F, m, n]
+                best_solution_fitness_l = fit_l
+    print(f'{i}/{num_Fval}')
+    return (best_solution_l, best_solution_fitness_l)
+
+tic = time.perf_counter()
+result = pool.map(inner_loop, range(num_Fval))
+toc = time.perf_counter()
+
+for r in result:
+    if r[1] > best_solution_fitness:
+        best_solution_fitness = r[1]
+        best_solution = r[0]
+
+print(f'best solution: {best_solution} with {best_solution_fitness} after {toc-tic} s')
+# for F_i in tqdm(range(num_Fval)):
+#     F = F_i * F_res + F_range[0]
+#     is_new = False
+#     for m_i in range(num_mval):
+#         m = m_i * m_res + m_range[0]
+#         for n_i in range(num_nval):
+#             n = n_i * n_res + n_range[0]
+#             fit_l = fitness_func(0, [F, m, n], 0)
+#             if fit_l > best_solution_fitness:
+#                 best_solution = [F, m, n]
+#                 best_solution_fitness = fit_l
+#                 is_new = True
+#     print(f'Best parameter set: {best_solution} with fitness {best_solution_fitness} ' + 'New' if is_new else '')
+
+# # F, m, n
+# num_genes = len(analytical_solution)
+# gene_space = [F_range, m_range, n_range]
+# initial_population = [[random.uniform(x[0], 2. if x[1] is None else x[1]) for x in gene_space] for _ in range(population_size)]
+
+# ga_instance = pygad.GA(initial_population=initial_population,
+#                        num_generations=num_generations,
+#                        num_parents_mating=num_parents_mating,
+#                        fitness_func=fitness_func,
+#                        mutation_probability=mutation_probability,
+#                        gene_type=float,
+#                        gene_space=gene_space,
+#                        allow_duplicate_genes=False,
+#                        suppress_warnings=True,
+#                        parent_selection_type='rank',
+#                        parallel_processing=parallel_processing,
+#                        on_generation=show_progress,
+#                        keep_elitism=25)
+# ga_instance.run()
+
+# # best_solution = ga_instance.best_solutions[-1]
+# # best_solution_fitness = ga_instance.best_solutions_fitness[-1]
 # best_solution, best_solution_fitness, best_index = ga_instance.best_solution()
 
 P_best = [None] * num_flow_rates
