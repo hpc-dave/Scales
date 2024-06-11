@@ -54,9 +54,9 @@ F_range = [0.5, 2.]
 m_range = [0.5, 2.]
 n_range = [0.5, 2.]
 
-F_res = 0.1
-m_res = 0.2
-n_res = 0.2
+F_res = 0.01
+m_res = 0.01
+n_res = 0.01
 
 # dummy peak
 flow_rates = [1e-5, 5e-5, 1e-4]     # in m^3/s
