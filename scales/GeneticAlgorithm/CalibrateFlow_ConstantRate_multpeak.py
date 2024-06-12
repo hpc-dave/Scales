@@ -20,22 +20,25 @@ import time
 parser = argparse.ArgumentParser(description='Constant rate with multiple peaks')
 parser.add_argument('-n', '--num_proc', type=int, help='number of parallel workers')
 parser.add_argument('-p', '--parallel', action='store_true', help='activates parallelism and set number of workers automatically')
+parser.add_argument('-s', '--samples', type=int, help='number of samples to use')
+parser.add_argument('-d', '--deviation', type=float, help='standard deviation of the noise')
+
 
 # GA settings
 
 parallel_processing = None
 
-if __name__ == '__main__':
-    args = parser.parse_args()
-    num_proc = args.num_proc
-    parallel_processing = args.parallel
-    if num_proc is not None:
-        if num_proc < 1:
-            raise ValueError(f'Parallelization specifier has to be > 0, received {args.parallel}!')
-    elif parallel_processing:
-        num_proc = cpu_count()
-    else:
-        num_proc = 1
+args = parser.parse_args()
+num_proc = args.num_proc
+parallel_processing = args.parallel
+num_samples = args.samples
+if num_proc is not None:
+    if num_proc < 1:
+        raise ValueError(f'Parallelization specifier has to be > 0, received {args.parallel}!')
+elif parallel_processing:
+    num_proc = cpu_count()
+else:
+    num_proc = 1
 
 F_range = [0.9, 1.1]
 m_range = [0.9, 1.1]
@@ -46,8 +49,20 @@ m_res = 0.01
 n_res = 0.01
 
 # dummy peak
-flow_rates = [1e-5, 1e-4]     # in m^3/s
-run_times = [1e4, 1e3]         # in s
+flow_rates_list = [1e-5, 1e-4, 5e-5, 2.5e-5, 7.5e-5]     # in m^3/s
+run_times_list  = [1e04, 1e03, 5e03, 7.5e03, 2.5e03]         # in s    # noqa: E221
+
+if num_samples is None:
+    num_samples = len(flow_rates_list)
+else:
+    if num_samples > len(flow_rates_list):
+        raise ValueError('the number of samples is too large')
+    elif num_samples < 1:
+        raise ValueError('at least one sample has to be included')
+
+flow_rates = [flow_rates_list[n] for n in range(num_samples)]
+run_times = [run_times_list[n] for n in range(num_samples)]
+
 num_tsteps = 100
 
 # flow_rate = 0.001  # in m^3/s
@@ -213,6 +228,9 @@ def ComputeAllPeaks(parameters):
 
 
 peak_exp = ComputeAllPeaks(analytical_solution)
+if args.deviation is not None:
+    for e in peak_exp:
+        e += np.random.normal(0, args.deviation, e.size)
 
 
 def fitness_func(ga, solution, solution_idx):
@@ -243,8 +261,13 @@ if num_proc > num_Fval:
     num_proc = num_Fval
 p_range = list(range(0, num_Fval, int(num_Fval/num_proc)))
 p_range.append(num_Fval)
-print(f'Generating worker pool with {num_proc} workers')
+if num_proc > 1:
+    print(f'Generating worker pool with {num_proc} workers')
 pool = Pool(num_proc)
+
+print(f'Number of samples: {num_flow_rates}')
+if args.deviation is not None:
+    print(f'Standard deviation noise: {args.deviation}')
 
 
 def inner_loop(i: int):
@@ -253,8 +276,8 @@ def inner_loop(i: int):
     best_solution_fitness_l = 0.
     # only show progress bar for process 0
     disable_tqdm = i != 0
-    if not disable_tqdm:
-        print('The progress bar only provides an indicator of the progress based on process 0!')
+    if not disable_tqdm and num_proc > 1:
+        print(f'The progress bar only provides an indicator of the progress based on process 0 with {(p_range[i+1] - p_range[i])*num_mval *num_nval} of {p_range[-1]*num_nval*num_nval} values')
     # To provide better feedback via the progress bar, the data range is mapped to a 1D space
     # and from there the information retrieved
     num_Fval_l = p_range[i+1] - p_range[i]          # get the range of F-values for this specific worker
@@ -287,19 +310,23 @@ for i, r in enumerate(result):
         best_solution = r[0]
 
 # evaluate and print result
-print(f'best solution: {best_solution} with {best_solution_fitness} after {toc-tic} s')
+print(f'best solution: {best_solution} with {best_solution_fitness} after {toc-tic:1.1f} s')
 
 P_best = [None] * num_flow_rates
 J_h_best = [None] * num_flow_rates
 p_inlet = network.pores('left')
 P_err = [None] * num_flow_rates
+P_err_rel = [None] * num_flow_rates
 for i in range(num_flow_rates):
     J_h_best, P_best = ComputeFlow(flow_rates[i], *best_solution)
     J_h_best, P_ana = ComputeFlow(flow_rates[i], *analytical_solution)
-    P_err[i] = np.sqrt(np.sum((P_ana[p_inlet] - P_best[p_inlet])**2)/p_inlet.size)
+    P_ana = np.average(P_ana)
+    P_best = np.average(P_best)
+    P_err[i] = np.sqrt((P_ana-P_best)**2)
+    P_err_rel[i] = P_err/P_ana
 
 print("Best solution:", best_solution)
 print("Best solution fitness:", best_solution_fitness)
-print(f'Error in dP: {P_err} Pa')
+print(f'Error in dP: {P_err} Pa - {P_err_rel}')
 
 print('finished')
