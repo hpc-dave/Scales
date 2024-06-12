@@ -18,50 +18,36 @@ import time
 #################
 
 parser = argparse.ArgumentParser(description='Constant rate with multiple peaks')
-parser.add_argument('-g', '--num_generations', type=int, help='Number of generations (int)')
-parser.add_argument('-p', '--population_size', type=int, help='Population size (int)')
-parser.add_argument('-m', '--num_parents_mating', type=int, help='Number of mating parents (int)')
-parser.add_argument('-b', '--mutation_probability', type=float, help='mutation probability')
-parser.add_argument('--parallel', type=int, help='number of parallel processes')
+parser.add_argument('-n', '--num_proc', type=int, help='number of parallel workers')
+parser.add_argument('-p', '--parallel', action='store_true', help='activates parallelism and set number of workers automatically')
 
 # GA settings
-num_generations = 100
-population_size = 500
-num_parents_mating = 4
-mutation_probability = 0.05
 
 parallel_processing = None
 
 if __name__ == '__main__':
     args = parser.parse_args()
-    num_generations = args.num_generations if args.num_generations else num_generations
-    population_size = args.population_size if args.population_size else population_size
-    num_parents_mating = args.num_parents_mating if args.num_parents_mating else num_parents_mating
-    mutation_probability = args.mutation_probability if args.mutation_probability else mutation_probability
-    if args.parallel:
-        if args.parallel < 1:
+    num_proc = args.num_proc
+    parallel_processing = args.parallel
+    if num_proc is not None:
+        if num_proc < 1:
             raise ValueError(f'Parallelization specifier has to be > 0, received {args.parallel}!')
-        elif args.parallel > 1:
-            parallel_processing = ['process', args.parallel]
+    elif parallel_processing:
+        num_proc = cpu_count()
+    else:
+        num_proc = 1
 
-# print arguments
-print(f'Generations:              {num_generations}')
-print(f'Population size:          {population_size}')
-print(f'Number of mating parents: {num_parents_mating}')
-print(f'Mutation probability:     {mutation_probability}')
-print(f'Parallel processing:      {0 if parallel_processing is None else parallel_processing[1]}')
-
-F_range = [0.5, 1.5]
-m_range = [0.5, 1.5]
-n_range = [0.5, 1.5]
+F_range = [0.9, 1.1]
+m_range = [0.9, 1.1]
+n_range = [0.9, 1.1]
 
 F_res = 0.01
-m_res = 0.1
-n_res = 0.1
+m_res = 0.01
+n_res = 0.01
 
 # dummy peak
-flow_rates = [1e-5, 5e-5, 1e-4]     # in m^3/s
-run_times = [1e4, 5e3, 1e3]         # in s
+flow_rates = [1e-5, 1e-4]     # in m^3/s
+run_times = [1e4, 1e3]         # in s
 num_tsteps = 100
 
 # flow_rate = 0.001  # in m^3/s
@@ -87,6 +73,13 @@ network['throat.diameter'] /= F_range[1]
 tol_flow = 1e-8
 tol_mass = 1e-6
 max_iter = 100
+
+# test configuration
+num_flow_rates = len(flow_rates)
+time_exp = {}
+peak_exp = {}
+
+analytical_solution = [1., 1., 1.]
 
 
 def ComputeFlow(rate, F, m, n):
@@ -207,14 +200,6 @@ def ComputePeak(props, parameters):
     return peak
 
 
-# test configuration
-num_flow_rates = len(flow_rates)
-time_exp = {}
-peak_exp = {}
-
-analytical_solution = [1., 1., 1.]
-
-
 def ComputeAllPeaks(parameters):
     peak_num = [None]*num_flow_rates
     for i in range(num_flow_rates):
@@ -229,12 +214,6 @@ def ComputeAllPeaks(parameters):
 
 peak_exp = ComputeAllPeaks(analytical_solution)
 
-# J_h, P = ComputeFlow(*analytical_solution)
-# peak_analytical, c_final = ComputeMassTransport(analytical_solution[0], J_h)
-
-# plt.plot(peak_analytical)
-# plt.show()
-# plt.pause(1)
 
 def fitness_func(ga, solution, solution_idx):
     fitness = 1.
@@ -249,104 +228,66 @@ def fitness_func(ga, solution, solution_idx):
     return fitness
 
 
-def show_progress(ga):
-    best_solution, best_solution_fitness, _ = ga.best_solution()
-    best_sol = ''.join(f'{entry:1.3f} ' for entry in best_solution)
-    best_sol_fit = f'{best_solution_fitness:1.2e}'
-    print(f'Generation {ga.generations_completed}/{ga.num_generations} - best solution: {best_sol} ({best_sol_fit})')
-
-
+# prepare looping
 num_Fval = int((F_range[1]-F_range[0])/F_res)
 num_mval = int((m_range[1]-m_range[0])/m_res)
 num_nval = int((n_range[1]-n_range[0])/n_res)
 best_solution = [-1., -1., -1.]
 best_solution_fitness = 0.
 
-num_procs = parallel_processing[1] if parallel_processing is not None else cpu_count()
-p_range = list(range(0, num_Fval, int(num_Fval/num_procs)))
+# create parallel pool
+# Here we split the F-value range among the different workers
+# This is an optimization to reduce the number of times a worker has to
+# retrieve a new loop instance, allocate memory and so on
+if num_proc > num_Fval:
+    num_proc = num_Fval
+p_range = list(range(0, num_Fval, int(num_Fval/num_proc)))
 p_range.append(num_Fval)
-print(f'Generating worker pool with {num_procs} workers')
-pool = Pool(num_procs)
+print(f'Generating worker pool with {num_proc} workers')
+pool = Pool(num_proc)
+
 
 def inner_loop(i: int):
+    # defining the loop that should be executed by the worker
     best_solution_l = [-1., -1., -1.]
     best_solution_fitness_l = 0.
+    # only show progress bar for process 0
     disable_tqdm = i != 0
     if not disable_tqdm:
         print('The progress bar only provides an indicator of the progress based on process 0!')
-    num_Fval_l = p_range[i+1] - p_range[i]
-    Fm_range = num_mval * num_Fval_l
-    for Fm_i in tqdm(range(Fm_range), disable=disable_tqdm):
-        F_i = int(Fm_i/num_mval)
-        m_i = int(Fm_i - F_i * num_mval)
+    # To provide better feedback via the progress bar, the data range is mapped to a 1D space
+    # and from there the information retrieved
+    num_Fval_l = p_range[i+1] - p_range[i]          # get the range of F-values for this specific worker
+    Fmn_range = num_nval * num_mval * num_Fval_l    
+    mn_range = num_nval * num_mval
+    for Fmn_i in tqdm(range(Fmn_range), disable=disable_tqdm):
+        F_i = int(Fmn_i/mn_range)
+        m_i = int((Fmn_i - F_i * mn_range)/num_nval)
+        n_i = int(Fmn_i - F_i * mn_range - m_i * num_nval)
         F = (F_i + p_range[i]) * F_res + F_range[0]
         m = m_i * m_res + m_range[0]
-        # print(f'F_i {F_i} -> F {F} | m_i {m_i} -> m {m}')
-        for n_i in range(num_nval):
-            n = n_i * n_res + n_range[0]
-            fit_l = fitness_func(0, [F, m, n], 0)
-            if fit_l > best_solution_fitness_l:
-                best_solution_l = [F, m, n]
-                best_solution_fitness_l = fit_l
-    # for F_i in tqdm(range(p_range[i], p_range[i+1]), disable=disable_tqdm):
-    #     F = F_i * F_res + F_range[0]
-    #     for m_i in range(num_mval):
-    #         m = m_i * m_res + m_range[0]
-    #         for n_i in range(num_nval):
-    #             n = n_i * n_res + n_range[0]
-    #             fit_l = fitness_func(0, [F, m, n], 0)
-    #             if fit_l > best_solution_fitness_l:
-    #                 best_solution_l = [F, m, n]
-    #                 best_solution_fitness_l = fit_l
+        n = n_i * n_res + n_range[0]
+        # print(f'F_i {F_i} -> F {F} | m_i {m_i} -> m {m} | n_i {n_i} -> n {n}')
+        fit_l = fitness_func(0, [F, m, n], 0)
+        if fit_l > best_solution_fitness_l:
+            best_solution_l = [F, m, n]
+            best_solution_fitness_l = fit_l
     return (best_solution_l, best_solution_fitness_l)
 
+
+# actually run the process
 tic = time.perf_counter()
-result = pool.map(inner_loop, range(num_procs))
+result = pool.map(inner_loop, range(num_proc))
 toc = time.perf_counter()
 
-for r in result:
+# reduce the result array
+for i, r in enumerate(result):
     if r[1] > best_solution_fitness:
         best_solution_fitness = r[1]
         best_solution = r[0]
 
+# evaluate and print result
 print(f'best solution: {best_solution} with {best_solution_fitness} after {toc-tic} s')
-# for F_i in tqdm(range(num_Fval)):
-#     F = F_i * F_res + F_range[0]
-#     is_new = False
-#     for m_i in range(num_mval):
-#         m = m_i * m_res + m_range[0]
-#         for n_i in range(num_nval):
-#             n = n_i * n_res + n_range[0]
-#             fit_l = fitness_func(0, [F, m, n], 0)
-#             if fit_l > best_solution_fitness:
-#                 best_solution = [F, m, n]
-#                 best_solution_fitness = fit_l
-#                 is_new = True
-#     print(f'Best parameter set: {best_solution} with fitness {best_solution_fitness} ' + 'New' if is_new else '')
-
-# # F, m, n
-# num_genes = len(analytical_solution)
-# gene_space = [F_range, m_range, n_range]
-# initial_population = [[random.uniform(x[0], 2. if x[1] is None else x[1]) for x in gene_space] for _ in range(population_size)]
-
-# ga_instance = pygad.GA(initial_population=initial_population,
-#                        num_generations=num_generations,
-#                        num_parents_mating=num_parents_mating,
-#                        fitness_func=fitness_func,
-#                        mutation_probability=mutation_probability,
-#                        gene_type=float,
-#                        gene_space=gene_space,
-#                        allow_duplicate_genes=False,
-#                        suppress_warnings=True,
-#                        parent_selection_type='rank',
-#                        parallel_processing=parallel_processing,
-#                        on_generation=show_progress,
-#                        keep_elitism=25)
-# ga_instance.run()
-
-# # best_solution = ga_instance.best_solutions[-1]
-# # best_solution_fitness = ga_instance.best_solutions_fitness[-1]
-# best_solution, best_solution_fitness, best_index = ga_instance.best_solution()
 
 P_best = [None] * num_flow_rates
 J_h_best = [None] * num_flow_rates
