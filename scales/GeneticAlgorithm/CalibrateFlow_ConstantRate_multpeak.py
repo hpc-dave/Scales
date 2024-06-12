@@ -231,6 +231,8 @@ peak_exp = ComputeAllPeaks(analytical_solution)
 if args.deviation is not None:
     for e in peak_exp:
         e += np.random.normal(0, args.deviation, e.size)
+else:
+    print('No standard deviation specified')
 
 
 def fitness_func(ga, solution, solution_idx):
@@ -323,7 +325,7 @@ for i in range(num_flow_rates):
     P_ana = np.average(P_ana)
     P_best = np.average(P_best)
     P_err[i] = np.sqrt((P_ana-P_best)**2)
-    P_err_rel[i] = P_err/P_ana
+    P_err_rel[i] = P_err[i]/P_ana
 
 print("Best solution:", best_solution)
 print("Best solution fitness:", best_solution_fitness)
