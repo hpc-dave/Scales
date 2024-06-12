@@ -10,6 +10,7 @@ import argparse
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from pathos.multiprocessing import ProcessingPool as Pool
+from pathos.helpers import cpu_count
 import time
 
 #################
@@ -261,26 +262,42 @@ num_nval = int((n_range[1]-n_range[0])/n_res)
 best_solution = [-1., -1., -1.]
 best_solution_fitness = 0.
 
-num_procs = parallel_processing[1] if parallel_processing is not None else 8
+num_procs = parallel_processing[1] if parallel_processing is not None else cpu_count()
 p_range = list(range(0, num_Fval, int(num_Fval/num_procs)))
 p_range.append(num_Fval)
+print(f'Generating worker pool with {num_procs} workers')
 pool = Pool(num_procs)
+
 def inner_loop(i: int):
     best_solution_l = [-1., -1., -1.]
     best_solution_fitness_l = 0.
     disable_tqdm = i != 0
     if not disable_tqdm:
         print('The progress bar only provides an indicator of the progress based on process 0!')
-    for F_i in tqdm(range(p_range[i], p_range[i+1]), disable=disable_tqdm):
-        F = F_i * F_res + F_range[0]
-        for m_i in range(num_mval):
-            m = m_i * m_res + m_range[0]
-            for n_i in range(num_nval):
-                n = n_i * n_res + n_range[0]
-                fit_l = fitness_func(0, [F, m, n], 0)
-                if fit_l > best_solution_fitness_l:
-                    best_solution_l = [F, m, n]
-                    best_solution_fitness_l = fit_l
+    num_Fval_l = p_range[i+1] - p_range[i]
+    Fm_range = num_mval * num_Fval_l
+    for Fm_i in tqdm(range(Fm_range), disable=disable_tqdm):
+        F_i = int(Fm_i/num_mval)
+        m_i = int(Fm_i - F_i * num_mval)
+        F = (F_i + p_range[i]) * F_res + F_range[0]
+        m = m_i * m_res + m_range[0]
+        # print(f'F_i {F_i} -> F {F} | m_i {m_i} -> m {m}')
+        for n_i in range(num_nval):
+            n = n_i * n_res + n_range[0]
+            fit_l = fitness_func(0, [F, m, n], 0)
+            if fit_l > best_solution_fitness_l:
+                best_solution_l = [F, m, n]
+                best_solution_fitness_l = fit_l
+    # for F_i in tqdm(range(p_range[i], p_range[i+1]), disable=disable_tqdm):
+    #     F = F_i * F_res + F_range[0]
+    #     for m_i in range(num_mval):
+    #         m = m_i * m_res + m_range[0]
+    #         for n_i in range(num_nval):
+    #             n = n_i * n_res + n_range[0]
+    #             fit_l = fitness_func(0, [F, m, n], 0)
+    #             if fit_l > best_solution_fitness_l:
+    #                 best_solution_l = [F, m, n]
+    #                 best_solution_fitness_l = fit_l
     return (best_solution_l, best_solution_fitness_l)
 
 tic = time.perf_counter()
