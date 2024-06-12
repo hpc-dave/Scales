@@ -50,13 +50,13 @@ print(f'Number of mating parents: {num_parents_mating}')
 print(f'Mutation probability:     {mutation_probability}')
 print(f'Parallel processing:      {0 if parallel_processing is None else parallel_processing[1]}')
 
-F_range = [0.5, 2.]
-m_range = [0.5, 2.]
-n_range = [0.5, 2.]
+F_range = [0.5, 1.5]
+m_range = [0.5, 1.5]
+n_range = [0.5, 1.5]
 
 F_res = 0.01
-m_res = 0.01
-n_res = 0.01
+m_res = 0.1
+n_res = 0.1
 
 # dummy peak
 flow_rates = [1e-5, 5e-5, 1e-4]     # in m^3/s
@@ -261,25 +261,30 @@ num_nval = int((n_range[1]-n_range[0])/n_res)
 best_solution = [-1., -1., -1.]
 best_solution_fitness = 0.
 
-num_procs = parallel_processing[1] if parallel_processing is not None else 4
+num_procs = parallel_processing[1] if parallel_processing is not None else 8
+p_range = list(range(0, num_Fval, int(num_Fval/num_procs)))
+p_range.append(num_Fval)
 pool = Pool(num_procs)
 def inner_loop(i: int):
     best_solution_l = [-1., -1., -1.]
     best_solution_fitness_l = 0.
-    F = i * F_res + F_range[0]
-    for m_i in range(num_mval):
-        m = m_i * m_res + m_range[0]
-        for n_i in range(num_nval):
-            n = n_i * n_res + n_range[0]
-            fit_l = fitness_func(0, [F, m, n], 0)
-            if fit_l > best_solution_fitness_l:
-                best_solution_l = [F, m, n]
-                best_solution_fitness_l = fit_l
-    print(f'{i}/{num_Fval}')
+    disable_tqdm = i != 0
+    if not disable_tqdm:
+        print('The progress bar only provides an indicator of the progress based on process 0!')
+    for F_i in tqdm(range(p_range[i], p_range[i+1]), disable=disable_tqdm):
+        F = F_i * F_res + F_range[0]
+        for m_i in range(num_mval):
+            m = m_i * m_res + m_range[0]
+            for n_i in range(num_nval):
+                n = n_i * n_res + n_range[0]
+                fit_l = fitness_func(0, [F, m, n], 0)
+                if fit_l > best_solution_fitness_l:
+                    best_solution_l = [F, m, n]
+                    best_solution_fitness_l = fit_l
     return (best_solution_l, best_solution_fitness_l)
 
 tic = time.perf_counter()
-result = pool.map(inner_loop, range(num_Fval))
+result = pool.map(inner_loop, range(num_procs))
 toc = time.perf_counter()
 
 for r in result:
