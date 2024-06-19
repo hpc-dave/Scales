@@ -78,13 +78,9 @@ run_times = [run_times_list[n] for n in range(num_samples)]
 
 num_tsteps = 1000
 
-# flow_rate = 0.001  # in m^3/s
 delta_P = 250      # Pa
 c_peak = 1.        # concentration in mol/m^3
 D_bin = 1e-6       # binary diffusion coefficient in m^2/s
-
-# define the porous network for computing the peak
-
 
 # read in network
 if file_type == 'csv':

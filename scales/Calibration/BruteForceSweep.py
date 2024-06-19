@@ -12,7 +12,7 @@ class Sweeper:
                  fitness_func: Callable,
                  pre_process=None,
                  post_process=None,
-                 parallelism=None,
+                 parallelism: int | bool = None,
                  save_all_results: bool = None):
         r"""
         Initializes the object and sanitizes input
@@ -24,12 +24,14 @@ class Sweeper:
         resolution: list
             list of resolutions for each parameter range
         fitness_func: Callable
-            function to evaluate the fitness of the solution with signature (Sweeper, list) -> float
+            function object to evaluate the fitness of the solution with signature (Sweeper, list) -> float
+            or with signature (Sweeper, list) -> (float, custom_result)
+            where the custom result will be stored additionally, if specified
         pre_process: Callable
-            function to be executed prior to the parameter sweep
+            function object to be executed prior to the parameter sweep with signature () -> None
         post_process: Callable
-            function to be executed after the parameter sweep
-        parallelism
+            function object to be executed after the parameter sweep with signature () -> None
+        parallelism: int | bool
             execution in parallel, can be an integer to provide a number of workers or boolean and the number
             of workers will be determined automatically
         save_all_results: bool
@@ -189,6 +191,13 @@ class Sweeper:
         return self.elapsed_time
 
     def AllResults(self) -> list:
+        r"""
+        returns a list of results, if saving was turned on
+
+        Returns
+        -------
+        list with [best fit, fitness [, custom results]]
+        """
         if self.save_all_results:
             return self.all_results
         else:
