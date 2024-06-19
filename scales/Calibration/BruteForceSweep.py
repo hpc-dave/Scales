@@ -12,7 +12,8 @@ class Sweeper:
                  fitness_func: Callable,
                  pre_process=None,
                  post_process=None,
-                 parallelism=None):
+                 parallelism=None,
+                 save_all_results: bool = None):
         r"""
         Initializes the object and sanitizes input
 
@@ -31,6 +32,8 @@ class Sweeper:
         parallelism
             execution in parallel, can be an integer to provide a number of workers or boolean and the number
             of workers will be determined automatically
+        save_all_results: bool
+            flag, if all results should be stored and returned
         """
         # input sanitation
         self.parameter_range = []
@@ -38,6 +41,7 @@ class Sweeper:
         self.best_fit = None
         self.best_fitness = 0.
         self.elapsed_time = 0.
+        self.save_all_results = save_all_results
         if not (isinstance(parameter_range, tuple) or isinstance(parameter_range, list)):
             raise TypeError('The parameter range has to be provided as list or tuple')
         for e in parameter_range:
@@ -92,6 +96,9 @@ class Sweeper:
             print(f'Generating worker pool with {self.parallelism} workers')
         self.pool = Pool(self.parallelism)
 
+        if self.save_all_results:
+            self.all_results = []
+
     def run(self) -> None:
         r"""
         Conducts the parameter sweep
@@ -108,6 +115,8 @@ class Sweeper:
             best_solution_l = [-1.] * self.num_parameters
             best_solution_fitness_l = 0.
             num_samples_l = self.p_range[n_worker+1] - self.p_range[n_worker]  # get the range of values for this specific worker
+            if self.save_all_results:
+                all_results_l = []
             # only show progress bar for process 0
             disable_tqdm = n_worker != 0
             if not disable_tqdm and self.parallelism > 1:
@@ -121,11 +130,23 @@ class Sweeper:
                 params = self._mapping_1D_to_Range(i_total)
                 for j in range(self.num_parameters):
                     params[j] = params[j] * self.resolution[j] + self.parameter_range[j][0]
-                fit_l = self.fitness_func(self, params)
+                r_l = self.fitness_func(self, params)
+                if isinstance(r_l, tuple):
+                    fit_l = r_l[0]
+                    if self.save_all_results:
+                        all_results_l.append((params, fit_l, r_l[1:]))
+                else:
+                    fit_l = r_l
+                    if self.save_all_results:
+                        all_results_l.append((params, fit_l))
+
                 if fit_l > best_solution_fitness_l:
                     best_solution_l = params
                     best_solution_fitness_l = fit_l
-            return (best_solution_l, best_solution_fitness_l)
+            if self.save_all_results:
+                return (best_solution_l, best_solution_fitness_l, all_results_l)
+            else:
+                return (best_solution_l, best_solution_fitness_l)
 
         if self.pre_process:
             self.pre_process(self)
@@ -141,6 +162,8 @@ class Sweeper:
             if r[1] > self.best_fitness:
                 self.best_fit = r[0]
                 self.best_fitness = r[1]
+            if self.save_all_results:
+                self.all_results += r[2]
 
         if self.post_process:
             self.post_process(self)
@@ -164,6 +187,12 @@ class Sweeper:
         Time in s as float
         """
         return self.elapsed_time
+
+    def AllResults(self) -> list:
+        if self.save_all_results:
+            return self.all_results
+        else:
+            raise ValueError('the option for saving all results was deactivated, cannot provide anything')
 
     def _mapping_Range_to_1D(self, params) -> int:
         r"""
