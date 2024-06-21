@@ -4,6 +4,7 @@ import openpnm as op
 import numpy as np
 from BruteForceSweep import Sweeper
 from PrepareBed import ExtractPackingAlongAxis as EPAA
+from PrepareBed import AddPoreTrain
 from pnm_mctools.IO import network_to_vtk
 from ScaleNetwork import ScaleNetwork
 import scipy
@@ -42,7 +43,7 @@ elif parallel_processing:
 else:
     num_proc = 1
 filename = args.file
-# filename='scales/Calibration/network_MB_R4.csv'
+filename='scales/Calibration/network_MB_R4.csv'
 file_type = args.file_type
 if filename is None:
     raise ValueError('No filename provided for reading in the packed bed')
@@ -57,7 +58,7 @@ F_range = [0.9, 1.1]
 m_range = [0.9, 1.1]
 n_range = [0.9, 1.1]
 
-F_res = 0.1
+F_res = 0.01
 m_res = 0.01
 n_res = 0.01
 
@@ -119,49 +120,43 @@ V_tube = r_tube**2 * math.pi * l_tube
 inlet_throats = {}
 mu_f = 0.001  # viscosity water in Pas
 g_tube = math.pi * r_tube**4/(8. * mu_f)
-# add P2 and T2
+
+train_coords = []
+train_pore_labels = []
+train_throat_labels = []
+train_prop = []
+
 coord_P = np.average(network['pore.coords'], axis=0).reshape((1, -1))
 coord_P[0, 0] = 0.
-p_label = network.Np
-conns = np.zeros((network.pores('inlet_bed').size, 2), dtype=int)
-conns[:, 0] = network.pores('inlet_bed')
-conns[:, 1] = p_label
-op.topotools.extend(network=network, coords=coord_P, conns=conns, labels=['outlet_wool'])
-t_label = network.find_neighbor_throats(pores=[p_label])
-network['pore.volume'][p_label] = V_wool*0.5
-network['pore.diameter'][p_label] = r_tube * 2
-network['throat.diameter'][t_label] = r_tube * 0.1  # should be a bit smaller, otherwise the conductances turn to shit
-network['throat.length'][t_label] = 1e-6
-inlet_throats['wool_to_bed'] = t_label
-
-# add P1 and T1
+train_coords.append(coord_P.copy())
+train_pore_labels.append('outlet_wool')
+train_throat_labels.append('wool_to_bed')
+train_prop.append({'pore.volume': V_wool * 0.5,
+                   'pore.diameter': r_tube * 2.,
+                   'throat.diameter': r_tube * 0.1,
+                   'throat.length': 1e-6})
 coord_P[0, 0] = -l_wool
-p_label = network.Np
-conns = np.zeros((network.pores('outlet_wool').size, 2), dtype=int)
-conns[:, 0] = network.pores('outlet_wool')
-conns[:, 1] = p_label
-op.topotools.extend(network=network, coords=coord_P, conns=conns, labels=['inlet_wool'])
-t_label = network.find_neighbor_throats(pores=[p_label])
-network['pore.volume'][p_label] = V_wool*0.5 + V_tube * 0.5
-network['pore.diameter'][p_label] = r_tube * 2
-network['throat.diameter'][t_label] = r_tube * 2
-network['throat.length'][t_label] = l_wool
-inlet_throats['wool'] = t_label
-
-
-# add P0 and T0
+train_coords.append(coord_P.copy())
+train_pore_labels.append('inlet_wool')
+train_throat_labels.append('wool')
+train_prop.append({'pore.volume': V_wool * 0.5 + V_tube*0.5,
+                   'pore.diameter': r_tube * 2.,
+                   'throat.diameter': r_tube * 2.,
+                   'throat.length': l_wool})
 coord_P[0, 0] = -l_wool - l_tube
-p_label = network.Np
-conns = np.zeros((network.pores('inlet_wool').size, 2), dtype=int)
-conns[:, 0] = network.pores('inlet_wool')
-conns[:, 1] = p_label
-op.topotools.extend(network=network, coords=coord_P, conns=conns, labels=['inlet_tracer'])
-t_label = network.find_neighbor_throats(pores=[p_label])
-network['pore.volume'][p_label] = V_tube * 0.5
-network['pore.diameter'][p_label] = r_tube * 2
-network['throat.diameter'][t_label] = r_tube * 2
-network['throat.length'][t_label] = l_tube
-inlet_throats['tube'] = t_label
+train_coords.append(coord_P.copy())
+train_pore_labels.append('inlet_tracer')
+train_throat_labels.append('tube')
+train_prop.append({'pore.volume': V_tube*0.5,
+                   'pore.diameter': r_tube * 2.,
+                   'throat.diameter': r_tube * 2.,
+                   'throat.length': l_tube})
+AddPoreTrain(network=network,
+             coords=train_coords,
+             properties=train_prop,
+             pore_labels=train_pore_labels,
+             throat_labels=train_throat_labels,
+             label_connection='inlet_bed')
 
 Nc = 1
 
@@ -176,7 +171,6 @@ time_exp = {}
 peak_exp = {}
 
 analytical_solution = [1., 1., 1.]
-
 
 def ComputeFlow(rate, F, m, n):
 
@@ -201,8 +195,10 @@ def ComputeFlow(rate, F, m, n):
 
     g = Conductance(throat_density=rho, throat_viscosity=mu)
     # g[inlet_throats['wool_to_bed']] = 1.  # extremely high conductance, just for distribution
-    g[inlet_throats['tube']] = g_tube
-    g[inlet_throats['wool']] = g_tube * 1e-2
+    g[network.throats('tube')] = g_tube
+    g[network.throats('wool')] = g_tube * 1e-2
+    # g[inlet_throats['tube']] = g_tube
+    # g[inlet_throats['wool']] = g_tube * 1e-2
 
     if np.any(np.isnan(g)):
         return np.full_like(g, fill_value=-1.), 0., False
@@ -220,8 +216,10 @@ def ComputeFlow(rate, F, m, n):
         rate_prev = g * (grad * x)
         g = Conductance(throat_density=rho, throat_viscosity=mu, rate_prev=rate_prev)
         # g[inlet_throats['wool_to_bed']] = 1.  # extremely high conductance, just for distribution
-        g[inlet_throats['tube']] = g_tube
-        g[inlet_throats['wool']] = g_tube * 1e-2
+        g[network.throats('tube')] = g_tube
+        g[network.throats('wool')] = g_tube * 1e-2
+        # g[inlet_throats['tube']] = g_tube
+        # g[inlet_throats['wool']] = g_tube * 1e-2
         flux = mt_f.Fluxes(g, grad)
         J = -div(flux)
         J = mt_f.ApplyBC(A=J)
