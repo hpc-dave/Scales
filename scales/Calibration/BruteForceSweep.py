@@ -83,7 +83,10 @@ class Sweeper:
         self.num_parameters = len(parameter_range)
         self.extent = []
         for i in range(self.num_parameters):
-            self.extent.append(int((self.parameter_range[i][1] - self.parameter_range[i][0]) / self.resolution[i]))
+            self.extent.append(int((self.parameter_range[i][1] - self.parameter_range[i][0])
+                                   / self.resolution[i]) + 1)
+            if self.parameter_range[i][0] + self.resolution[i] * self.extent[i] < self.parameter_range[i][1]:    # correction for potentially weird rounding
+                self.extent[i] += 1
 
         self.hsum = [1] * self.num_parameters
         if self.num_parameters > 1:
@@ -136,7 +139,10 @@ class Sweeper:
                 if isinstance(r_l, tuple):
                     fit_l = r_l[0]
                     if self.save_all_results:
-                        all_results_l.append((params, fit_l, r_l[1:]))
+                        if len(r_l) == 2:
+                            all_results_l.append((params, fit_l, r_l[1]))
+                        else:
+                            all_results_l.append((params, fit_l, r_l[1:]))
                 else:
                     fit_l = r_l
                     if self.save_all_results:
